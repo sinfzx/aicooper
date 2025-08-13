@@ -22,28 +22,28 @@
     "@my-platform/types": "workspace:*",
     "@my-platform/ui": "workspace:*",
     "@prisma/client": "^6.1.0",
-    "@t3-oss/env-nextjs": "^0.11.1",
+    "@t3-oss/env-nextjs": "^0.13.8",
     "@tanstack/react-query": "^5.59.0",
     "@trpc/client": "^11.0.0",
     "@trpc/next": "^11.0.0",
     "@trpc/react-query": "^11.0.0",
     "@trpc/server": "^11.0.0",
-    "bcryptjs": "^2.4.3",
+    "bcryptjs": "^3.0.2",
     "jsonwebtoken": "^9.0.2",
     "next": "^15.4.2",
     "next-auth": "^4.24.10",
-    "nodemailer": "^6.10.1",
+    "nodemailer": "^7.0.5",
     "prisma": "^6.1.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "resend": "^3.2.0",
-    "stripe": "^17.3.1",
+    "resend": "^6.0.1",
+    "stripe": "^18.4.0",
     "superjson": "^2.2.1",
-    "zod": "^3.23.8"
+    "zod": "^4.0.17"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.11",
-    "@types/bcryptjs": "^2.4.6",
+    "@types/bcryptjs": "^3.0.0",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^24.0.15",
     "@types/nodemailer": "^6.4.17",
@@ -53,6 +53,6 @@
     "eslint-config-next": "^15.4.2",
     "tailwindcss": "^4.1.11",
     "tsx": "^4.7.0",
-    "typescript": "~5.8.3"
+    "typescript": "~5.9.2"
   }
 }
