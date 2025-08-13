@@ -26,10 +26,10 @@
     "ci:check": "turbo run type-check lint content:generate db:validate"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.1.2",
-    "glob": "^10.3.10",
+    "@biomejs/biome": "^2.1.4",
+    "glob": "^11.0.3",
     "tsx": "^4.7.0",
     "turbo": "^2.0.0",
-    "typescript": "~5.8.3"
+    "typescript": "~5.9.2"
   }
 }
