@@ -1,0 +1,35 @@
+{
+  "name": "ai-platform-monorepo",
+  "private": true,
+  "version": "0.2.0",
+  "type": "module",
+  "packageManager": "pnpm@10.11.0",
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "type-check": "turbo run type-check",
+    "dev:desktop": "turbo run dev --filter=@my-platform/desktop",
+    "dev:api": "turbo run dev --filter=@my-platform/api",
+    "build:desktop": "turbo run build --filter=@my-platform/desktop",
+    "build:api": "turbo run build --filter=@my-platform/api",
+    "tauri:dev": "turbo run tauri:dev --filter=@my-platform/desktop",
+    "tauri:build": "turbo run tauri:build --filter=@my-platform/desktop",
+    "desktop:dev": "cd apps/desktop && pnpm tauri:dev",
+    "desktop:build": "cd apps/desktop && pnpm tauri:build",
+    "content:generate": "turbo run content:generate",
+    "db:push": "turbo run db:push --filter=@my-platform/api",
+    "db:migrate": "turbo run db:migrate --filter=@my-platform/api",
+    "db:studio": "turbo run db:studio --filter=@my-platform/api",
+    "db:validate": "turbo run db:validate --filter=@my-platform/api",
+    "ci:check": "turbo run type-check lint content:generate db:validate"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.1.2",
+    "glob": "^10.3.10",
+    "tsx": "^4.7.0",
+    "turbo": "^2.0.0",
+    "typescript": "~5.8.3"
+  }
+}

@@ -1,0 +1,30 @@
+[
+  {
+    "id": "ai-knowledge",
+    "name": "AI 知识框架",
+    "description": "帮助您整理、管理和检索知识内容，提升学习和工作效率。",
+    "features": [
+      "知识笔记整理",
+      "智能内容检索",
+      "结构化知识管理",
+      "多格式文档支持"
+    ],
+    "screenshots": [],
+    "status": "stable",
+    "tier": "free"
+  },
+  {
+    "id": "prompt-templates",
+    "name": "提示词模板库",
+    "description": "精选的提示词模板，涵盖写作、编程、翻译等常用场景，帮助您快速获得高质量的 AI 输出。",
+    "features": [
+      "精选提示词模板",
+      "分类管理系统",
+      "一键复制使用",
+      "自定义模板创建"
+    ],
+    "screenshots": [],
+    "status": "beta",
+    "tier": "free"
+  }
+]

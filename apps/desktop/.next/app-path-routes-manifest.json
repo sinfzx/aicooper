@@ -1,0 +1,17 @@
+{
+  "/_not-found/page": "/_not-found",
+  "/data-verification/page": "/data-verification",
+  "/debug/page": "/debug",
+  "/features-test/page": "/features-test",
+  "/flows/[id]/page": "/flows/[id]",
+  "/api-test/page": "/api-test",
+  "/knowledge/[id]/page": "/knowledge/[id]",
+  "/page": "/",
+  "/templates/[id]/page": "/templates/[id]",
+  "/test-routing/page": "/test-routing",
+  "/tauri-debug/page": "/tauri-debug",
+  "/tauri-ai-test/page": "/tauri-ai-test",
+  "/test/page": "/test",
+  "/auth/page": "/auth",
+  "/login/page": "/login"
+}

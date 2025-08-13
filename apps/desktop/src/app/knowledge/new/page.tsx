@@ -1,0 +1,29 @@
+"use client";
+
+import React from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { PageLayout } from '@/components/layout/PageLayout';
+import { Group, Button } from '@mantine/core';
+import { IconBrain } from '@tabler/icons-react';
+import { KnowledgeFrameworkCreator } from '@my-platform/ai-knowledge';
+
+export default function NewKnowledgeFrameworkPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const mode = searchParams?.get('mode');
+
+  return (
+    <PageLayout
+      title={mode === 'ai' ? 'AI 创建知识框架' : '创建知识框架'}
+      description={mode === 'ai' ? '通过 AI 辅助生成知识框架' : '手动创建一个知识框架'}
+      icon={<IconBrain size={28} color="var(--mantine-color-violet-6)" />}
+      breadcrumbs={[{ label: '首页', href: '/' }, { label: '知识框架', href: '/' }, { label: '创建' }]}
+      onBack={() => router.back()}
+      actions={<Group><Button variant="light" onClick={() => router.back()}>返回</Button></Group>}
+    >
+      <KnowledgeFrameworkCreator mode={mode === 'ai' ? 'ai' : 'manual'} onCancel={() => router.back()} onCreated={() => router.push('/')} />
+    </PageLayout>
+  );
+}
+
+

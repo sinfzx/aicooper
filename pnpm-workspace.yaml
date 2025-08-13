@@ -1,0 +1,5 @@
+packages:
+  - "apps/desktop"
+  - "apps/api"
+  - "packages/*"
+  - "features/*"

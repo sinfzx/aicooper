@@ -1,0 +1,471 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// 用户模型
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  avatar        String?
+  
+  // 订阅信息
+  subscription  Subscription?
+  
+  // NextAuth.js 相关
+  accounts      Account[]
+  sessions      Session[]
+  
+  // 用户数据
+  apiKeys       ApiKey[]
+  usage         Usage[]
+  
+  // 提示词模板
+  promptTemplates PromptTemplate[]
+  promptExecutions PromptExecution[]
+  templateRatings TemplateRating[]
+  
+  // 知识框架
+  knowledgeFrameworks KnowledgeFramework[]
+  
+  // 流程设计
+  flowDesigns FlowDesign[]
+  
+  // 记忆
+  memories Memory[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("users")
+}
+
+// NextAuth.js 账户模型
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+// NextAuth.js 会话模型
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+// NextAuth.js 验证令牌模型
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verificationtokens")
+}
+
+// 订阅模型
+model Subscription {
+  id                String   @id @default(cuid())
+  userId            String   @unique
+  stripeCustomerId  String   @unique
+  stripeSubscriptionId String? @unique
+  stripePriceId     String?
+  status            String   // active, canceled, incomplete, etc.
+  tier              String   // free, pro, enterprise
+  currentPeriodEnd  DateTime?
+  
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("subscriptions")
+}
+
+// API 密钥模型
+model ApiKey {
+  id          String   @id @default(cuid())
+  userId      String
+  name        String
+  key         String   @unique
+  provider    String   // openai, anthropic, etc.
+  isActive    Boolean  @default(true)
+  
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("api_keys")
+}
+
+// 使用统计模型
+model Usage {
+  id          String   @id @default(cuid())
+  userId      String
+  featureId   String   // ai-knowledge, prompt-templates, etc.
+  action      String   // create, search, generate, etc.
+  tokens      Int?     // AI tokens used
+  cost        Float?   // Cost in cents
+  metadata    Json?    // Additional data
+  
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([featureId, createdAt])
+  @@index([userId, featureId])
+  @@map("usage")
+}
+
+// 验证码模型
+model VerificationCode {
+  id        String   @id @default(cuid())
+  email     String
+  code      String
+  expiresAt DateTime
+  attempts  Int      @default(0)
+  used      Boolean  @default(false)
+  
+  createdAt DateTime @default(now())
+
+  @@unique([email, code])
+  @@index([email, expiresAt])
+  @@index([used, expiresAt])
+  @@map("verification_codes")
+}
+
+// 提示词模板分类
+model PromptCategory {
+  id          String @id @default(cuid())
+  name        String @unique
+  description String
+  icon        String
+  color       String
+  
+  templates PromptTemplate[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("prompt_categories")
+}
+
+// 提示词模板
+model PromptTemplate {
+  id          String @id @default(cuid())
+  title       String
+  description String
+  content     String @db.Text
+  category    String
+  parameters  Json   // PromptParameter[]
+  article     String @db.Text // MD 说明文章
+  isPublic    Boolean @default(false)
+  isBlocked   Boolean @default(false)
+  localOnly   Boolean @default(true)
+  syncedAt    DateTime?
+  authorId    String
+  usageCount  Int     @default(0)
+  rating      Float   @default(0)
+  
+  author       User                @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  categoryRef  PromptCategory?     @relation(fields: [category], references: [id])
+  executions   PromptExecution[]
+  ratings      TemplateRating[]
+  tags         Tag[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isPublic, usageCount])
+  @@index([category, isPublic])
+  @@index([authorId, createdAt])
+  @@index([localOnly, syncedAt])
+  @@map("prompt_templates")
+}
+
+// 提示词执行记录
+model PromptExecution {
+  id              String @id @default(cuid())
+  templateId      String
+  userId          String
+  parameters      Json   // Record<string, any>
+  generatedPrompt String @db.Text
+  result          String? @db.Text
+  model           String?
+  tokens          Int?
+  
+  template PromptTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  user     User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([templateId, createdAt])
+  @@index([model, createdAt])
+  @@map("prompt_executions")
+}
+
+// 模板评分
+model TemplateRating {
+  id         String @id @default(cuid())
+  templateId String
+  userId     String
+  rating     Int    // 1-5
+  comment    String?
+  
+  template PromptTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  user     User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([templateId, userId])
+  @@map("template_ratings")
+}
+
+// 标签系统
+model Tag {
+  id        String   @id @default(cuid())
+  name      String
+  parentId  String?
+  level     Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // 自引用关系
+  parent   Tag?  @relation("TagHierarchy", fields: [parentId], references: [id])
+  children Tag[] @relation("TagHierarchy")
+  
+  // 多对多关系
+  frameworks KnowledgeFramework[]
+  templates  PromptTemplate[]
+  flows      FlowDesign[]
+  
+  @@unique([name, parentId])
+  @@map("tags")
+}
+
+// 知识框架
+model KnowledgeFramework {
+  id          String @id @default(cuid())
+  name        String
+  description String
+  domain      String
+  version     Int    @default(1)
+  isBuiltIn   Boolean @default(false)
+  isPublic    Boolean @default(false)
+  isBlocked   Boolean @default(false)
+  localOnly   Boolean @default(true)
+  syncedAt    DateTime?
+  authorId    String
+  usageCount  Int     @default(0)
+  
+  author User              @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  nodes  KnowledgeNode[]
+  tags   Tag[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isPublic, usageCount])
+  @@index([domain, isPublic])
+  @@index([authorId, createdAt])
+  @@index([localOnly, syncedAt])
+  @@map("knowledge_frameworks")
+}
+
+// 知识节点
+model KnowledgeNode {
+  id          String @id @default(cuid())
+  frameworkId String
+  parentId    String?
+  title       String
+  description String?
+  content     String? @db.Text
+  questions   String[]
+  urls        String[]
+  position    Json?   // { x: number, y: number }
+  level       Int     @default(0)
+  order       Int     @default(0)
+  expanded    Boolean @default(false)
+  
+  framework KnowledgeFramework @relation(fields: [frameworkId], references: [id], onDelete: Cascade)
+  parent    KnowledgeNode?     @relation("NodeHierarchy", fields: [parentId], references: [id])
+  children  KnowledgeNode[]    @relation("NodeHierarchy")
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([frameworkId, level])
+  @@index([parentId, order])
+  @@map("knowledge_nodes")
+}
+
+// 流程设计
+model FlowDesign {
+  id           String   @id @default(cuid())
+  title        String
+  description  String
+  article      String   @db.Text
+  difficulty   String   @default("medium") // easy, medium, hard
+  totalTime    String?
+  isPublic     Boolean  @default(false)
+  isBlocked    Boolean  @default(false)
+  localOnly    Boolean  @default(true)
+  syncedAt     DateTime?
+  authorId     String
+  usageCount   Int      @default(0)
+  
+  author User        @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  steps  FlowStep[]
+  tools  FlowTool[]
+  tags   Tag[]
+  
+  // JSON 字段存储数组数据
+  prerequisites Json // string[]
+  outcomes      Json // string[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isPublic, usageCount])
+  @@index([difficulty, isPublic])
+  @@index([authorId, createdAt])
+  @@index([localOnly, syncedAt])
+  @@map("flow_designs")
+}
+
+// 流程步骤
+model FlowStep {
+  id            String @id @default(cuid())
+  flowId        String
+  title         String
+  description   String @db.Text
+  order         Int
+  estimatedTime String?
+  difficulty    String @default("medium")
+  questions     String[]
+  
+  flow      FlowDesign     @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  resources FlowResource[]
+  stepTools FlowStepTool[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([flowId, order])
+  @@map("flow_steps")
+}
+
+// 流程工具
+model FlowTool {
+  id          String @id @default(cuid())
+  flowId      String
+  name        String
+  description String
+  url         String
+  category    String
+  
+  flow      FlowDesign     @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  stepTools FlowStepTool[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([flowId, category])
+  @@map("flow_tools")
+}
+
+// 流程步骤工具关联
+model FlowStepTool {
+  id     String @id @default(cuid())
+  stepId String
+  toolId String
+  
+  step FlowStep @relation(fields: [stepId], references: [id], onDelete: Cascade)
+  tool FlowTool @relation(fields: [toolId], references: [id], onDelete: Cascade)
+  
+  @@unique([stepId, toolId])
+  @@map("flow_step_tools")
+}
+
+// 流程资源
+model FlowResource {
+  id          String  @id @default(cuid())
+  stepId      String
+  type        String  @default("url") // 目前只支持 url
+  title       String
+  url         String
+  description String?
+  
+  step FlowStep @relation(fields: [stepId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([stepId, type])
+  @@map("flow_resources")
+}
+
+// 记忆模型
+model Memory {
+  id          String   @id @default(cuid())
+  userId      String
+  title       String
+  content     String   @db.Text
+  date        DateTime
+  location    String?
+  people      String[] // 相关人物
+  tags        String[] // 标签
+  emotions    String[] // 情感标签
+  imageUrl    String?  // 图片URL
+  audioUrl    String?  // 音频URL
+  videoUrl    String?  // 视频URL
+  aiGenerated Boolean  @default(false) // 是否AI生成的图片
+  visibility  String   @default("private") // private, shared, public
+  
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, date])
+  @@index([userId, createdAt])
+  @@index([date])
+  @@index([tags])
+  @@index([emotions])
+  @@index([people])
+  @@index([location])
+  @@map("memories")
+}

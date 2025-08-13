@@ -1,0 +1,117 @@
+---
+description: AI Platform 仓库级 Cursor 协作与编码规则（始终生效）
+globs:
+  - '**/*'
+alwaysApply: true
+---
+
+## 助手行为（Cursor）
+
+- 默认使用中文回复。
+- 仅在必要处使用 Markdown；代码或命令用合适的围栏；避免大段不相关输出。
+- 涉及代码改动，优先使用编辑操作；遵循本仓库的 TypeScript 严格模式与 ESM 约定。
+- 不参与 `archivecodes/` 历史项目的实现细节（仅作为迁移源参照）。
+- 架构约束与依赖以 `docs/specs.md` 为准；协作规范以本规则与 `.cursorrules` 为准。
+- 尽量不要使用模拟数据，使用与生产环境下产品真实运行的逻辑
+
+## 通用
+
+- 语言：TypeScript（`strict: true`）
+- 包管理：pnpm（根 `packageManager: pnpm@10.x`）
+- 模块：ESM（`"type": "module"`）
+- 命名：
+  - 组件文件：PascalCase（如 `Button.tsx`）
+  - 工具/服务：camelCase（如 `userService.ts`）
+  - Next App Router 页面：`page.tsx`
+
+## 架构
+
+- Monorepo：pnpm + Turborepo；工作区见 `pnpm-workspace.yaml`；根脚本统一调度各 app/package。
+- 应用边界：
+  - `apps/desktop`（Tauri + Next.js）桌面外壳与 UI；仅通过特定能力与本地系统交互（`src-tauri/capabilities/*.json`），承担大多数 features 的功能。
+  - `apps/api`（Next.js App Router + tRPC + Prisma）承担官网与 API 服务；服务端逻辑在此聚合。
+- 共享包：
+  - `packages/core` 负责 Feature 注册与运行时装配；不得直接耦合具体应用实现。
+  - `packages/types` 输出公共类型；禁止引入运行时代码。
+  - `packages/ui` 为无状态/轻状态 UI 组件；禁止引入服务端依赖。
+- Features 模块：位于 `features/*`，以 `feature.config.ts` 声明跨端元数据；`src/` 内组件可被 `apps/desktop` 与 `apps/api` 复用。
+- API 设计：`apps/api/src/trpc` 统一维护 `router.ts` 与 `procedures.ts`；所有输入使用 Zod 校验；开启 `superjson`。
+- 数据层：`apps/api/prisma/schema.prisma` 为唯一数据模式源；变更通过 `prisma migrate`；开发可 `db push` 同步。
+- 认证：NextAuth（目标 v5 + Magic Link）；服务端使用 Prisma Adapter；受保护路由使用 `protectedProcedure`。
+- 内容流水线：通过 `apps/api/scripts/generate-content.ts` 生成 `apps/api/src/content/**`，作为官网/静态展示数据来源。
+- 构建与缓存：`turbo.json` 约束任务依赖与产物缓存（`.next/**`、`dist/**`、`target/**`）。
+- 依赖与可观测性：对外部 AI/支付等服务需实现超时、重试、限流与审计日志；错误分层（用户可读/开发诊断）。
+
+## 前端（Next.js 15 + Tailwind 4）
+
+- 组件：函数式组件 + Hooks；客户端组件添加 `'use client'`。
+- 样式：Tailwind CSS 4（尽量少用内联样式，统一近扁平化设计）。
+- 表单：React Hook Form + Zod（前端校验与类型统一）。
+- 状态：
+  - 服务器状态：React Query（`@tanstack/react-query`）
+  - 客户端状态：Zustand（含认证状态持久化）
+
+## API（tRPC 11）
+
+- 路由组织：
+  - `router.ts` 聚合业务路由
+  - `procedures.ts` 定义 `publicProcedure`/`protectedProcedure`
+- 输入校验：Zod（所有输入必检）
+- 认证保护：`protectedProcedure` + NextAuth 会话
+- 数据获取：React Query 客户端
+- Transformer：启用 `superjson`
+
+## 数据库（Prisma 6 + PostgreSQL）
+
+- 访问通过 Prisma Client；Schema 变更用迁移（`prisma migrate`），开发态可 `db push`。
+- 复杂查询 < 200ms；必要时使用索引、分页，避免 N+1；合理使用 `select/include`。
+
+## 认证与安全
+
+- 认证：NextAuth（目标 v5 + Magic Link；服务端使用 Prisma Adapter）。
+- 安全：使用 Next.js/NextAuth 默认防护；所有用户输入严格 Zod 校验。
+- 环境变量：`@t3-oss/env-nextjs` 管理；敏感信息不入库不入前端。
+
+## Features 模块
+
+- 结构：
+  - `feature.config.ts`（官网/桌面/后端集成与依赖的元数据）
+  - `src/`（组件/逻辑，可被桌面与官网复用）
+- 发布：设置 `website.enabled: true`，运行 `pnpm content:generate` 更新官网内容。
+- 依赖：在 `dependencies` 中明确声明包/外部服务，避免隐式全局依赖。
+
+## 日志与错误
+
+- 错误需包含上下文并分层（用户可读信息 vs. 开发日志）。
+- 对接外部 AI/支付等服务时：加入超时、重试、限流与审计日志。
+
+## 代码风格（强制）
+
+- 命名：函数为动词短语、变量为名词短语；避免 1-2 字母名与不必要缩写。
+- 控制流：优先早返回；超过 3 层嵌套应拆分函数；`catch` 必须记录或转换为域错误。
+- 注释：只写“为什么”；复杂类型/协议用 JSDoc/TSDoc；避免无意义注释。
+- 格式：遵循现有风格；避免不相关的格式化大改。
+
+## 提交与 CI
+
+- 提交信息：范围 + 动词 + 影响（如 `api: add user profile router`）。
+- PR：说明 Feature/包影响面，列出 breaking changes 与迁移指南。
+- CI：至少包含类型检查、lint、构建；可加入 `prisma validate` 与 `content:generate` 校验。
+
+## 本地运行约定
+
+- 安装：`pnpm install`
+- 开发：`pnpm dev`（或 `pnpm dev:api` / `pnpm dev:desktop`）
+- 数据库：`pnpm db:push` / `pnpm db:migrate` / `pnpm db:studio`（作用于 `apps/api`）
+- 内容生成：`pnpm content:generate`（会更新 `apps/api/src/content/**`）
+
+## 调试与运行
+
+- Desktop：
+  - 启动：`pnpm dev:desktop`（或 `pnpm tauri:dev`）；Next 开发使用 `--turbopack`。
+  - 配置：避免使用已弃用的 `experimental.turbo`；统一使用顶层 `turbopack` 配置。
+  - 资源权限：变更 `src-tauri/capabilities/*.json` 后需重启以生效。
+- API：
+  - 启动：`pnpm dev:api`；首启前运行 `pnpm db:push` 或 `pnpm db:migrate`。
+  - 内容：每次构建/启动都会执行 `content:generate`，若失败需检查 `apps/api/scripts/generate-content.ts` 与 `features/*/feature.config.ts`。
+  - 环境：通过 `@t3-oss/env-nextjs` 校验 `.env`；缺失关键变量禁止启动到生产模式。

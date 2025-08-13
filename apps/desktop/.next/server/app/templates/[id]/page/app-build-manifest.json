@@ -1,0 +1,28 @@
+{
+  "pages": {
+    "/templates/[id]/page": [
+      "static/chunks/c40f9_@tauri-apps_api_d448e964._.js",
+      "static/chunks/apps_desktop_src_f61d983e._.js",
+      "static/chunks/aa330_next_45043607._.js",
+      "static/chunks/903d6_@mantine_core_esm_8c6f4896._.js",
+      "static/chunks/node_modules__pnpm_9f5c06b1._.js",
+      "static/chunks/apps_desktop_src_app_globals_db0e1be7.css",
+      "static/chunks/apps_desktop_src_app_layout_tsx_f90fd924._.js",
+      "static/chunks/aa330_next_dist_client_components_builtin_global-error_5080191a.js",
+      "static/chunks/apps_desktop_src_64d4325b._.js",
+      "static/chunks/903d6_@mantine_core_esm_7111e72c._.js",
+      "static/chunks/97d8d_@floating-ui_react_dist_e81903ad._.js",
+      "static/chunks/node_modules__pnpm_85932ee6._.js",
+      "static/chunks/apps_desktop_src_app_templates_[id]_page_tsx_5080191a._.js",
+      "static/chunks/[turbopack]_browser_dev_hmr-client_hmr-client_ts_92fead4a._.js",
+      "static/chunks/aa330_next_dist_compiled_react-dom_18f3f9cb._.js",
+      "static/chunks/aa330_next_dist_compiled_next-devtools_index_d2386ae7.js",
+      "static/chunks/aa330_next_dist_compiled_9775ca59._.js",
+      "static/chunks/aa330_next_dist_client_a49f7304._.js",
+      "static/chunks/aa330_next_dist_03e38d64._.js",
+      "static/chunks/61dca_@swc_helpers_cjs_28edb73c._.js",
+      "static/chunks/apps_desktop_e69f0d32._.js",
+      "static/chunks/apps_desktop_cb603e9d._.js"
+    ]
+  }
+}

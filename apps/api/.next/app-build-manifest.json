@@ -1,0 +1,14 @@
+{
+  "pages": {
+    "/api/flows/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/flows/route.js"
+    ],
+    "/api/prompt-templates/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/prompt-templates/route.js"
+    ]
+  }
+}

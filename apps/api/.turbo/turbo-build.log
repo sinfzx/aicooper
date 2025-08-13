@@ -1,0 +1,77 @@
+
+
+> @my-platform/api@0.1.0 build /Users/cavatina/projects/tauri-nextjs-template/apps/api
+> pnpm content:generate && next build
+
+
+> @my-platform/api@0.1.0 content:generate /Users/cavatina/projects/tauri-nextjs-template/apps/api
+> tsx scripts/generate-content.ts
+
+🚀 Generating website content...
+✅ Website content generated successfully!
+   - 2 features
+   - 3 pricing tiers
+   - 5 navigation items
+   [1m[38;2;173;127;168m▲ Next.js 15.4.2[39m[22m
+
+ [37m[1m [22m[39m Creating an optimized production build ...
+🚀 Generating website content...
+✅ Website content generated successfully!
+   - 2 features
+   - 3 pricing tiers
+   - 5 navigation items
+🚀 Generating website content...
+✅ Website content generated successfully!
+   - 2 features
+   - 3 pricing tiers
+   - 5 navigation items
+ [32m[1m✓[22m[39m Compiled successfully in 1000ms
+[?25l [37m[1m [22m[39m Linting and checking validity of types  [36m.[39m[2K[1G [37m[1m [22m[39m Linting and checking validity of types  [36m..[39m[2K[1G [37m[1m [22m[39m Linting and checking validity of types  [36m...[39m[2K[1G [37m[1m [22m[39m Linting and checking validity of types  [36m.[39m[2K[1G [37m[1m [22m[39m Linting and checking validity of types  [36m..[39m[2K[1G [37m[1m [22m[39m Linting and checking validity of types  [36m...[39m[2K[1G [37m[1m [22m[39m Linting and checking validity of types  [36m.[39m[2K[1G[?25h
+./src/app/api/auth/register/route.ts
+59:23  Warning: '_' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+
+./src/app/api/webhooks/stripe/route.ts
+60:31  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./src/lib/content.ts
+9:35  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./src/server/api/routers/features.ts
+12:42  Warning: 'ctx' is defined but never used.  @typescript-eslint/no-unused-vars
+98:20  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./src/server/api/trpc.ts
+10:15  Warning: 'CreateNextContextOptions' is defined but never used.  @typescript-eslint/no-unused-vars
+11:15  Warning: 'Session' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./src/trpc/query-client.ts
+2:8  Warning: 'superjson' is defined but never used.  @typescript-eslint/no-unused-vars
+
+info  - Need to disable some ESLint rules? Learn more here: https://nextjs.org/docs/app/api-reference/config/eslint#disabling-rules
+[?25l [36m.[39m [2K[1G [36m..[39m [2K[1G [36m...[39m [2K[1G [36m.[39m [2K[1G [36m..[39m [2K[1G [36m...[39m [2K[1G [36m.[39m [2K[1G [36m..[39m [2K[1G [36m...[39m [2K[1G[?25h    [32m[1m✓[22m[39m Linting and checking validity of types 
+[?25l [37m[1m [22m[39m Collecting page data  [36m.[39m[2K[1G [37m[1m [22m[39m Collecting page data  [36m..[39m[2K[1G [37m[1m [22m[39m Collecting page data  [36m...[39m❌ Invalid environment variables: {
+  DATABASE_URL: [ 'Required' ],
+  NEXTAUTH_SECRET: [ 'Required' ],
+  NEXTAUTH_URL: [ 'Required' ],
+  STRIPE_SECRET_KEY: [ 'Required' ],
+  STRIPE_WEBHOOK_SECRET: [ 'Required' ],
+  JWT_SECRET: [ 'Required' ],
+  NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: [ 'Required' ]
+}
+Error: Invalid environment variables
+    at n (.next/server/chunks/787.js:1:58820)
+    at <unknown> (.next/server/chunks/787.js:1:59000)
+    at e (.next/server/chunks/787.js:1:59273)
+    at 71222 (.next/server/app/api/trpc/[trpc]/route.js:1:1935)
+    at c (.next/server/webpack-runtime.js:1:128)
+    at 86272 (.next/server/app/api/trpc/[trpc]/route.js:5:4469)
+    at c (.next/server/webpack-runtime.js:1:128)
+    at <unknown> (.next/server/app/api/trpc/[trpc]/route.js:8:22586)
+    at c.X (.next/server/webpack-runtime.js:1:1206)
+    at <unknown> (.next/server/app/api/trpc/[trpc]/route.js:8:22558)
+[2K[1G[?25h
+[?25l [36m.[39m [2K[1G[?25h> Build error occurred
+[?25l [36m.[39m [2K[1G[?25h[Error: Failed to collect page data for /api/trpc/[trpc]] {
+  type: [32m'Error'[39m
+}
+[?25l [36m.[39m [?25h[41m[30m ELIFECYCLE [39m[49m [31mCommand failed with exit code 1.[39m

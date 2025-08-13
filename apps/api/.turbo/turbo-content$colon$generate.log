@@ -1,0 +1,10 @@
+
+
+> @my-platform/api@0.1.0 content:generate /Users/cavatina/projects/tauri-nextjs-template/apps/api
+> tsx scripts/generate-content.ts
+
+🚀 Generating website content...
+✅ Website content generated successfully!
+   - 2 features
+   - 3 pricing tiers
+   - 5 navigation items
