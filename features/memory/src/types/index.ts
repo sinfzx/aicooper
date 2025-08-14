@@ -40,6 +40,8 @@ export interface MemoryFilter {
   hasImage?: boolean;
   hasAudio?: boolean;
   hasVideo?: boolean;
+  sortBy?: 'date' | 'title' | 'created';
+  sortOrder?: 'asc' | 'desc';
 }
 
 export interface MemoryStats {

@@ -22,7 +22,8 @@ import {
   Progress,
   Tabs,
   Alert,
-  Stepper
+  Stepper,
+  Anchor
 } from '@mantine/core';
 import {
   IconRoute,
@@ -41,6 +42,11 @@ import {
 } from '@tabler/icons-react';
 import { notifications } from '@mantine/notifications';
 import { PageLayout } from '@/components/layout/PageLayout';
+
+const API_BASE = (
+  ((globalThis as any).process?.env?.NEXT_PUBLIC_API_BASE_URL as string | undefined) ||
+  'http://localhost:3001'
+).replace(/\/$/, '');
 
 // 模拟数据
 const mockFlowDesign = {
@@ -189,6 +195,49 @@ export default function FlowDesignDetail() {
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('overview');
   const [activeStep, setActiveStep] = useState(2); // 当前进行到第3步
+  const [editTasksOpen, setEditTasksOpen] = useState<null | { id: string; tasks: string[] }>(null);
+
+  React.useEffect(() => {
+    (async () => {
+      try {
+        const id = (params as any)?.id;
+        if (!id) return;
+        const res = await fetch(`${API_BASE}/api/flows/${id}`);
+        const data = await res.json();
+        if (!res.ok || !data?.success) return;
+        const f = data.data;
+        setFlowDesign((prev) => ({
+          ...prev,
+          id: f.id,
+          title: f.title,
+          description: f.description,
+          difficulty: f.difficulty || prev.difficulty,
+          total_time: f.totalTime || prev.total_time,
+          article: f.article || prev.article,
+          is_blocked: !!f.isBlocked,
+          steps: Array.isArray(f.steps) ? f.steps.map((s: any, idx: number) => ({
+            id: s.id,
+            title: s.title,
+            description: s.description,
+            estimated_time: s.estimatedTime,
+            difficulty: s.difficulty || 'medium',
+            order_index: s.order ?? idx,
+            completed: false,
+            tasks: Array.isArray(s.questions) ? s.questions : [],
+          })) : prev.steps,
+          // 展示用：仅名称
+          tools: Array.isArray(f.tools) ? f.tools.map((t: any) => t.name || t) : prev.tools,
+          prerequisites: Array.isArray(f.prerequisites) ? f.prerequisites : (() => { try { return JSON.parse(f.prerequisites || '[]') } catch { return prev.prerequisites } })(),
+          outcomes: Array.isArray(f.outcomes) ? f.outcomes : (() => { try { return JSON.parse(f.outcomes || '[]') } catch { return prev.outcomes } })(),
+          tags: Array.isArray(f.tags) ? f.tags : [],
+          is_public: !!f.isPublic,
+          local_only: !!f.localOnly,
+          created_at: f.createdAt || prev.created_at,
+          updated_at: f.updatedAt || prev.updated_at,
+        }));
+      } catch {}
+    })();
+  }, [params]);
 
   const handleBack = () => {
     router.back();
@@ -235,6 +284,19 @@ export default function FlowDesignDetail() {
       )
     }));
   };
+
+  const tasksToDisplay = (tasks: string[]) => tasks.map((task, idx) => {
+    const isUrl = /^https?:\/\//i.test(task);
+    return (
+      <Text key={idx} size="xs" c="dimmed">
+        {isUrl ? (
+          <Anchor href={task} target="_blank">{task}</Anchor>
+        ) : (
+          <>• {task}</>
+        )}
+      </Text>
+    );
+  });
 
   const getDifficultyColor = (difficulty: string) => {
     switch (difficulty) {
@@ -291,6 +353,70 @@ export default function FlowDesignDetail() {
           >
             编辑
           </Button>
+          <Button
+            variant="light"
+            onClick={() => {
+              try {
+                if (typeof window !== 'undefined') {
+                  const draft = {
+                    id: (flowDesign as any).id,
+                    title: flowDesign.title,
+                    description: flowDesign.description,
+                    difficulty: flowDesign.difficulty,
+                    article: (flowDesign as any).article || '',
+                    totalTime: (flowDesign as any).total_time || '',
+                    steps: (flowDesign as any).steps || [],
+                    tools: (flowDesign as any).tools || [],
+                    tags: (flowDesign as any).tags || [],
+                  } as any;
+                  window.localStorage.setItem('flowDraft', JSON.stringify(draft));
+                  window.location.href = '/flows/new?edit=1';
+                }
+              } catch {}
+            }}
+          >
+            编辑副本
+          </Button>
+          <Button
+            variant="light"
+            onClick={async () => {
+              try {
+                if (typeof window !== 'undefined' && (window as any).__TAURI__) {
+                  // @ts-ignore
+                  const { invoke } = await import('@tauri-apps/api/core');
+                  const payload = {
+                    id: '',
+                    title: flowDesign.title,
+                    description: flowDesign.description,
+                    difficulty: flowDesign.difficulty,
+                    total_time: flowDesign.total_time || null,
+                    article: flowDesign.article || null,
+                    steps: (flowDesign.steps || []).map((s) => ({
+                      title: s.title,
+                      description: s.description,
+                      estimated_time: s.estimated_time,
+                      difficulty: s.difficulty,
+                      order_index: s.order_index,
+                      questions: s.tasks || [],
+                    })),
+                    tools: (flowDesign.tools || []).map((t) => ({ name: t })),
+                    tags: ((flowDesign as any).tags || []).map((t: any) => t.id || t).filter(Boolean),
+                    local_only: true,
+                    created_at: 0,
+                    updated_at: 0,
+                  } as any;
+                  await invoke('save_local_flow', { flow: payload });
+                  notifications.show({ title: '已复制为我的流程', message: '已保存到本地', color: 'green' });
+                } else {
+                  notifications.show({ title: '仅桌面支持', message: '复制为我的流程需在桌面端使用', color: 'yellow' });
+                }
+              } catch {
+                notifications.show({ title: '操作失败', message: '保存到本地失败', color: 'red' });
+              }
+            }}
+          >
+            复制为我的流程（本地）
+          </Button>
           <ActionIcon
             variant="light"
             color="red"
@@ -310,6 +436,9 @@ export default function FlowDesignDetail() {
                 <Badge variant="light" color={getDifficultyColor(flowDesign.difficulty)}>
                   {getDifficultyLabel(flowDesign.difficulty)}
                 </Badge>
+              {(flowDesign as any).is_blocked && (
+                <Badge variant="light" color="red">已屏蔽</Badge>
+              )}
                 <Badge variant="light" color="blue">
                   <Group gap="xs">
                     <IconClock size={12} />
@@ -324,6 +453,27 @@ export default function FlowDesignDetail() {
                 更新于 {new Date(flowDesign.updated_at).toLocaleDateString()}
               </Text>
             </Group>
+
+            {/* 标签展示与聚合跳转 */}
+            {Array.isArray((flowDesign as any).tags) && (flowDesign as any).tags.length > 0 && (
+              <Group gap="xs">
+                {(flowDesign as any).tags.map((tg: any) => (
+                  <Badge
+                    key={tg.id}
+                    size="xs"
+                    variant="light"
+                    onClick={() => {
+                      if (typeof window !== 'undefined') {
+                        window.location.href = `/flows?tags=${encodeURIComponent(tg.id)}`
+                      }
+                    }}
+                    style={{ cursor: 'pointer' }}
+                  >
+                    {tg.parent ? `${tg.parent.name} / ${tg.name}` : tg.name}
+                  </Badge>
+                ))}
+              </Group>
+            )}
 
             <Box>
               <Group justify="space-between" mb="xs">
@@ -451,13 +601,18 @@ export default function FlowDesignDetail() {
                     <Box mb="sm">
                       <Text size="xs" fw={500} mb="xs">主要任务：</Text>
                       <Stack gap="xs">
-                        {step.tasks.map((task, idx) => (
-                          <Text key={idx} size="xs" c="dimmed">
-                            • {task}
-                          </Text>
-                        ))}
+                    {tasksToDisplay(step.tasks)}
                       </Stack>
                     </Box>
+                <Group justify="flex-end">
+                  <Button
+                    variant="light"
+                    size="xs"
+                    onClick={() => setEditTasksOpen({ id: step.id, tasks: step.tasks })}
+                  >
+                    编辑问题/任务
+                  </Button>
+                </Group>
                   </Timeline.Item>
                 ))}
               </Timeline>
@@ -501,6 +656,34 @@ export default function FlowDesignDetail() {
             </Stack>
           </Tabs.Panel>
         </Tabs>
+
+        {/* 编辑步骤任务/问题 */}
+        <Modal
+          opened={!!editTasksOpen}
+          onClose={() => setEditTasksOpen(null)}
+          title="编辑问题/任务"
+        >
+          {editTasksOpen && (
+            <Stack>
+              <Textarea
+                minRows={8}
+                value={(editTasksOpen.tasks || []).join('\n')}
+                onChange={(e) => setEditTasksOpen((prev) => prev ? { ...prev, tasks: e.currentTarget.value.split('\n').map(s => s.trim()).filter(Boolean) } : prev)}
+              />
+              <Group justify="flex-end">
+                <Button variant="light" onClick={() => setEditTasksOpen(null)}>取消</Button>
+                <Button onClick={() => {
+                  const payload = editTasksOpen;
+                  setFlowDesign((prev) => ({
+                    ...prev,
+                    steps: prev.steps.map(s => s.id === payload.id ? { ...s, tasks: payload.tasks } : s)
+                  }));
+                  setEditTasksOpen(null);
+                }}>保存</Button>
+              </Group>
+            </Stack>
+          )}
+        </Modal>
 
         {/* 编辑模态框 */}
         <Modal

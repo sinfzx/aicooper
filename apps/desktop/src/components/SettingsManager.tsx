@@ -54,6 +54,10 @@ export const SettingsManager: React.FC = () => {
     maxTokens: 4000,
     temperature: 0.7,
     enableTelemetry: false,
+    // memory defaults
+    memoryLanguage: 'zh-CN',
+    imageStyleDefault: 'artistic',
+    imageAspectDefault: '16:9',
   });
   const [isLoading, setIsLoading] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
@@ -204,6 +208,69 @@ export const SettingsManager: React.FC = () => {
                 控制 AI 响应的随机性和创造性
               </Text>
             </Box>
+          </Stack>
+        </Card>
+
+        {/* Memory 偏好设置（桌面端本地生效） */}
+        <Card shadow="sm" padding="lg" radius="md" withBorder>
+          <Stack gap="md">
+            <Group>
+              <IconRobot size={20} color="var(--mantine-color-teal-6)" />
+              <Title order={4}>记忆偏好</Title>
+            </Group>
+
+            <Divider />
+
+            <Group grow>
+              <NumberInput
+                label="出生年份"
+                value={settings.birthYear as any}
+                onChange={(v) => handleSettingChange('birthYear', (v as number) || undefined)}
+                min={1900}
+                max={2100}
+              />
+              <Select
+                label="出生地区"
+                placeholder="例如：CN-Guangdong/Guangzhou"
+                value={settings.birthRegion}
+                onChange={(v) => handleSettingChange('birthRegion', v || undefined)}
+                data={[]}
+              />
+            </Group>
+
+            <Group grow>
+              <Select
+                label="记忆语言"
+                value={settings.memoryLanguage}
+                onChange={(v) => handleSettingChange('memoryLanguage', (v as any) || 'zh-CN')}
+                data={[
+                  { value: 'zh-CN', label: '简体中文' },
+                  { value: 'en-US', label: 'English' },
+                ]}
+              />
+              <Select
+                label="生图默认风格"
+                value={settings.imageStyleDefault}
+                onChange={(v) => handleSettingChange('imageStyleDefault', (v as any) || 'artistic')}
+                data={[
+                  { value: 'realistic', label: '写实' },
+                  { value: 'artistic', label: '艺术' },
+                  { value: 'cartoon', label: '卡通' },
+                  { value: 'vintage', label: '复古' },
+                ]}
+              />
+              <Select
+                label="生图默认比例"
+                value={settings.imageAspectDefault}
+                onChange={(v) => handleSettingChange('imageAspectDefault', (v as any) || '16:9')}
+                data={[
+                  { value: '1:1', label: '1:1' },
+                  { value: '16:9', label: '16:9' },
+                  { value: '9:16', label: '9:16' },
+                  { value: '4:3', label: '4:3' },
+                ]}
+              />
+            </Group>
           </Stack>
         </Card>
 

@@ -1,6 +1,9 @@
 import { createCallerFactory, createTRPCRouter } from '@/server/api/trpc';
 import { authRouter } from './routers/auth';
 import { featuresRouter } from './routers/features';
+import { memoryRouter } from './routers/memory';
+import { settingsRouter } from './routers/settings';
+import { ideaverifyRouter } from './routers/ideaverify';
 
 /**
  * This is the primary router for your server.
@@ -10,6 +13,9 @@ import { featuresRouter } from './routers/features';
 export const appRouter = createTRPCRouter({
   auth: authRouter,
   features: featuresRouter,
+  memory: memoryRouter,
+  settings: settingsRouter,
+  ideaverify: ideaverifyRouter,
 });
 
 // export type definition of API

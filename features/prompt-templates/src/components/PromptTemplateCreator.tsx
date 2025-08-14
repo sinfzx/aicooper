@@ -25,6 +25,18 @@ export const PromptTemplateCreator: React.FC<PromptTemplateCreatorProps> = ({ mo
   const [saveTarget, setSaveTarget] = useState<'local' | 'sync'>('local');
   const [generating, setGenerating] = useState(false);
   const [isPublic, setIsPublic] = useState(false);
+  const [parameters, setParameters] = useState<any[]>([]);
+  const [article, setArticle] = useState<string>('');
+  const [loadedDraft, setLoadedDraft] = useState(false);
+  const validateForm = () => {
+  // RHF 统一校验将作为后续升级接入（当前使用轻量校验，避免额外依赖）
+    const issues: string[] = [];
+    if (!title?.trim()) issues.push('标题必填');
+    if (!description?.trim()) issues.push('描述必填');
+    if (!category?.trim()) issues.push('分类必选');
+    if (!content?.trim()) issues.push('模板内容必填');
+    return issues;
+  };
 
   const extractJson = (text: string): any | null => {
     try {
@@ -48,6 +60,7 @@ export const PromptTemplateCreator: React.FC<PromptTemplateCreatorProps> = ({ mo
       // 动态导入本地 prompt（仅桌面端有效）
       let promptTemplate = '';
       try {
+        // @ts-ignore 桌面端存在该路径
         const mod: any = await import('@/prompts/template-prompts');
         promptTemplate = mod.TEMPLATE_CREATE_PROMPT || '';
       } catch {}
@@ -61,20 +74,22 @@ export const PromptTemplateCreator: React.FC<PromptTemplateCreatorProps> = ({ mo
       let text = '';
       // 优先走 Tauri 本地密钥
       if (typeof window !== 'undefined' && (window as any).__TAURI__) {
+        // @ts-ignore
         const { invoke } = await import('@tauri-apps/api/core');
-        const keys = await invoke<any[]>('get_api_keys');
-        const def = keys.find((k) => k.is_default && k.is_active) || keys[0];
+        const keys = (await invoke('get_api_keys')) as any[];
+        const def = keys.find((k: any) => k.is_default && k.is_active) || keys[0];
         if (def) {
           const messages = [
             { role: 'user', content: filled },
           ];
-          text = await invoke<string>('chat_with_ai', {
+          // @ts-ignore
+          text = (await invoke('chat_with_ai', {
             provider: def.provider,
             apiKey: def.api_key,
             model: def.model || 'gpt-3.5-turbo',
             messages,
             baseUrl: def.base_url || null,
-          });
+          })) as string;
         }
       }
       // 兜底走 Pollinations 文本接口
@@ -92,7 +107,8 @@ export const PromptTemplateCreator: React.FC<PromptTemplateCreatorProps> = ({ mo
       if (parsed.success) {
         const tpl = parsed.data.template;
         setContent(tpl.prompt || content);
-        // TODO: 参数与文章后续可回填
+        setParameters(tpl.parameters || []);
+        setArticle(tpl.article || '');
       }
     } finally {
       setGenerating(false);
@@ -102,13 +118,48 @@ export const PromptTemplateCreator: React.FC<PromptTemplateCreatorProps> = ({ mo
   React.useEffect(() => {
     (async () => {
       try {
-        const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001').replace(/\/$/, '');
+        const API_BASE = (((globalThis as any).process?.env?.NEXT_PUBLIC_API_BASE_URL as string | undefined) || 'http://localhost:3001').replace(/\/$/, '');
         const res = await fetch(`${API_BASE}/api/tags`);
         const data = await res.json();
         if (data.success) {
           setAvailableTags(
             data.data.map((t: any) => ({ value: t.id, label: t.parent ? `${t.parent.name} / ${t.name}` : t.name }))
           );
+        }
+        // 草稿回填（在标签加载后，再次映射标签）
+        try {
+          const search = typeof window !== 'undefined' ? window.location.search : '';
+          const params = new URLSearchParams(search);
+          const isEdit = params.get('edit') === '1';
+          if (isEdit && !loadedDraft) {
+            const raw = typeof window !== 'undefined' ? window.localStorage.getItem('templateDraft') : null;
+            if (raw) {
+              const draft = JSON.parse(raw);
+              setTitle(draft.title || '');
+              setDescription(draft.description || '');
+              setCategory(draft.category || '');
+              setContent(draft.content || '');
+              setParameters(Array.isArray(draft.parameters) ? draft.parameters : []);
+              setArticle(draft.article || '');
+              const tagNamesOrIds: string[] = Array.isArray(draft.tags) ? draft.tags : [];
+              const mappedIds = tagNamesOrIds
+                .map((x: any) => {
+                  const found = (data.success ? data.data : []).find((t: any) => t.id === x || t.name === x);
+                  return found ? found.id : (typeof x === 'string' ? x : null);
+                })
+                .filter(Boolean) as string[];
+              setTagIds(mappedIds);
+              setLoadedDraft(true);
+            }
+          }
+        } catch {}
+        // 默认保存目标读取设置
+        if (typeof window !== 'undefined' && (window as any).__TAURI__) {
+          // @ts-ignore
+          const { invoke } = await import('@tauri-apps/api/core');
+          const settings = (await invoke('get_settings')) as any;
+          const def = settings?.default_save_targets?.template;
+          if (def === 'local' || def === 'sync') setSaveTarget(def);
         }
       } catch {}
     })();
@@ -117,8 +168,15 @@ export const PromptTemplateCreator: React.FC<PromptTemplateCreatorProps> = ({ mo
   const handleSubmit = async () => {
     try {
       setSubmitting(true);
-      await createTemplate({ title, description, category, content, mode, tags: tagIds, saveTarget, isPublic });
+      const issues = validateForm();
+      if (issues.length > 0) {
+        const msg = issues.join('；');
+        notifications.show({ title: '校验失败', message: msg || '请完善必填项', color: 'red', icon: <IconX size={16} /> });
+        return;
+      }
+      await createTemplate({ title, description, category, content, parameters, article, mode, tags: tagIds, saveTarget, isPublic });
       notifications.show({ title: '创建成功', message: '模板已创建', color: 'green', icon: <IconCheck size={16} /> });
+      try { if (typeof window !== 'undefined') window.localStorage.removeItem('templateDraft'); } catch {}
       onCreated?.();
     } catch (error) {
       notifications.show({ title: '创建失败', message: '无法创建模板', color: 'red', icon: <IconX size={16} /> });
@@ -133,6 +191,8 @@ export const PromptTemplateCreator: React.FC<PromptTemplateCreatorProps> = ({ mo
       <Textarea label="描述" placeholder="简要描述模板用途" value={description} onChange={(e) => setDescription(e.currentTarget.value)} minRows={2} required />
       <Select label="分类" placeholder="选择分类" value={category} onChange={(v) => setCategory(v || '')} data={[ '写作', '编程', '分析', '翻译', '教育', '营销', '其他' ]} required />
       <Textarea label="模板内容" placeholder="输入模板内容，使用 {参数名} 表示可替换参数" value={content} onChange={(e) => setContent(e.currentTarget.value)} minRows={8} required />
+      <Textarea label="参数（AI 回填，只读预览）" value={JSON.stringify(parameters || [], null, 2)} readOnly minRows={4} />
+      <Textarea label="说明（AI 回填）" placeholder="可编辑的 Markdown 说明" value={article} onChange={(e) => setArticle(e.currentTarget.value)} minRows={6} />
       <MultiSelect label="标签" placeholder="选择标签" data={availableTags} value={tagIds} onChange={setTagIds} searchable clearable />
       <Switch label="社区可见（isPublic）" checked={isPublic} onChange={(e) => setIsPublic(e.currentTarget.checked)} />
       <Select

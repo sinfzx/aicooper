@@ -20,6 +20,8 @@ export interface UseFlowDesignReturn {
   loadFlow: (flowId: string) => Promise<FlowDesign>;
   loadFlows: () => Promise<FlowDesign[]>;
   duplicateFlow: (flowId: string) => Promise<FlowDesign>;
+  syncFlow: (localId: string) => Promise<string | void>;
+  downloadFlow: (serverId: string) => Promise<void>;
 }
 
 export const useFlowDesign = (
@@ -27,7 +29,9 @@ export const useFlowDesign = (
 ): UseFlowDesignReturn => {
   const { flowId, autoLoad = true } = options;
   const API_BASE = (
-    process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001'
+    ((globalThis as any).process?.env?.NEXT_PUBLIC_API_BASE_URL as
+      | string
+      | undefined) || 'http://localhost:3001'
   ).replace(/\/$/, '');
 
   const [flow, setFlow] = useState<FlowDesign | null>(null);
@@ -76,21 +80,69 @@ export const useFlowDesign = (
     setError(null);
 
     try {
-      const response = await fetch(`${API_BASE}/api/flows`);
-      const data = await response.json();
-
-      if (data.success) {
-        const items = Array.isArray(data.data?.items) ? data.data.items : [];
-        setFlows(items);
-        return items;
-      } else {
-        throw new Error(data.error);
+      const combined: FlowDesign[] = [];
+      // 服务器列表
+      try {
+        const response = await fetch(`${API_BASE}/api/flows`);
+        const data = await response.json();
+        if (data.success) {
+          const items = Array.isArray(data.data?.items) ? data.data.items : [];
+          combined.push(...items);
+        }
+      } catch (e) {
+        console.warn('Load server flows failed', e);
       }
+
+      // 本地列表（Tauri）
+      if (typeof window !== 'undefined' && (window as any).__TAURI__) {
+        try {
+          // @ts-ignore 动态导入在 web 环境下不存在类型
+          const { invoke } = await import('@tauri-apps/api/core');
+          const locals = (await invoke('get_local_flows')) as any[];
+          const mapped = (locals || []).map(
+            (f: any) =>
+              ({
+                id: f.id,
+                title: f.title,
+                description: f.description,
+                tags: f.tags || [],
+                isPublic: !!f.is_public,
+                isBlocked: false,
+                authorId: 'local',
+                authorName: 'local',
+                createdAt: new Date(f.created_at || Date.now()).toISOString(),
+                updatedAt: new Date(f.updated_at || Date.now()).toISOString(),
+                syncedAt: f.server_id ? new Date().toISOString() : undefined,
+                localOnly: !!f.local_only,
+                type: 'flow',
+                article: f.article || '',
+                steps: [],
+                tools: [],
+                totalTime: f.total_time || undefined,
+                difficulty: (f.difficulty as any) || 'medium',
+                prerequisites: [],
+                outcomes: [],
+                serverId: f.server_id || null,
+              } as any)
+          );
+          const serverIds = new Set(
+            combined.map((i: any) => i.serverId || i.id)
+          );
+          const finalLocals = mapped.filter(
+            (m: any) => !m.serverId || !serverIds.has(m.serverId)
+          );
+          combined.unshift(...finalLocals);
+        } catch (e) {
+          console.warn('Load local flows failed', e);
+        }
+      }
+
+      setFlows(combined);
+      return combined;
     } catch (err) {
       const errorMessage =
         err instanceof Error ? err.message : 'Failed to load flows';
       setError(errorMessage);
-      // 返回空列表以避免界面崩溃
       setFlows([]);
       return [];
     } finally {
@@ -114,9 +166,10 @@ export const useFlowDesign = (
         typeof window !== 'undefined' &&
         (window as any).__TAURI__
       ) {
+        // @ts-ignore
         const { invoke } = await import('@tauri-apps/api/core');
         const now = Date.now();
-        const saved = await invoke<any>('save_local_flow', {
+        const saved = (await invoke('save_local_flow', {
           flow: {
             id: '',
             title: flowData.title,
@@ -131,7 +184,7 @@ export const useFlowDesign = (
             created_at: 0,
             updated_at: 0,
           },
-        });
+        })) as any;
         setFlows((prev) => [saved, ...prev]);
         return saved as FlowDesign;
       }
@@ -243,6 +296,25 @@ export const useFlowDesign = (
     return createFlow(duplicatedFlow);
   };
 
+  const syncFlow = async (localId: string): Promise<string | void> => {
+    if (typeof window === 'undefined' || !(window as any).__TAURI__) return;
+    // @ts-ignore
+    const { invoke } = await import('@tauri-apps/api/core');
+    const serverId = (await invoke('sync_local_flow_to_server', {
+      id: localId,
+    })) as string;
+    await loadFlows();
+    return serverId;
+  };
+
+  const downloadFlow = async (serverId: string): Promise<void> => {
+    if (typeof window === 'undefined' || !(window as any).__TAURI__) return;
+    // @ts-ignore
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('download_flow_from_server', { serverId });
+    await loadFlows();
+  };
+
   return {
     flow,
     flows,
@@ -254,5 +326,7 @@ export const useFlowDesign = (
     loadFlow,
     loadFlows,
     duplicateFlow,
+    syncFlow,
+    downloadFlow,
   };
 };

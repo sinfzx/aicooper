@@ -36,6 +36,11 @@ import {
 import { notifications } from '@mantine/notifications';
 import { PageLayout } from '@/components/layout/PageLayout';
 
+const API_BASE = (
+  ((globalThis as any).process?.env?.NEXT_PUBLIC_API_BASE_URL as string | undefined) ||
+  'http://localhost:3001'
+).replace(/\/$/, '');
+
 // 模拟数据
 const mockFramework = {
   id: '1',
@@ -45,6 +50,7 @@ const mockFramework = {
   version: 1,
   is_built_in: false,
   is_public: false,
+  is_blocked: false,
   local_only: true,
   created_at: '2024-01-15T10:00:00Z',
   updated_at: '2024-01-20T15:30:00Z',
@@ -99,6 +105,36 @@ export default function KnowledgeFrameworkDetail() {
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [addNodeModalOpen, setAddNodeModalOpen] = useState(false);
   const [selectedNode, setSelectedNode] = useState<any>(null);
+
+  React.useEffect(() => {
+    (async () => {
+      try {
+        const id = (params as any)?.id;
+        if (!id) return;
+        const res = await fetch(`${API_BASE}/api/knowledge-frameworks/${id}`);
+        const data = await res.json();
+        if (!res.ok || !data?.success) return;
+        const fw = data.data;
+        setFramework((prev) => ({
+          ...prev,
+          id: fw.id,
+          title: fw.title,
+          description: fw.description,
+          domain: fw.domain || prev.domain,
+          version: fw.version || prev.version,
+          is_built_in: !!fw.isBuiltIn,
+          is_public: !!fw.isPublic,
+          is_blocked: !!fw.isBlocked,
+          local_only: !!fw.localOnly,
+          created_at: fw.createdAt || prev.created_at,
+          updated_at: fw.updatedAt || prev.updated_at,
+          // 仅用于展示，节点结构后续从专用节点接口获取
+          nodes: prev.nodes,
+          tags: Array.isArray(fw.tags) ? fw.tags : [],
+        }) as any);
+      } catch {}
+    })();
+  }, [params]);
 
   const handleBack = () => {
     router.back();
@@ -202,6 +238,9 @@ export default function KnowledgeFrameworkDetail() {
                 <Badge variant="light" color="violet">
                   {framework.domain}
                 </Badge>
+                {(framework as any).is_blocked && (
+                  <Badge variant="light" color="red">已屏蔽</Badge>
+                )}
                 <Badge variant="light" color={framework.local_only ? 'orange' : 'green'}>
                   {framework.local_only ? '本地' : '已同步'}
                 </Badge>
@@ -236,6 +275,26 @@ export default function KnowledgeFrameworkDetail() {
                 }} />
               </div>
             </Box>
+            {/* 标签展示与聚合跳转 */}
+            {Array.isArray((framework as any).tags) && (framework as any).tags.length > 0 && (
+              <Group gap="xs">
+                {(framework as any).tags.map((tg: any, idx: number) => {
+                  const id = tg?.id || tg;
+                  const label = tg?.parent ? `${tg.parent.name} / ${tg.name}` : (tg?.name || tg);
+                  return (
+                    <Badge
+                      key={idx}
+                      size="xs"
+                      variant="light"
+                      onClick={() => { if (typeof window !== 'undefined') window.location.href = `/knowledge?tags=${encodeURIComponent(id)}`; }}
+                      style={{ cursor: 'pointer' }}
+                    >
+                      {label}
+                    </Badge>
+                  );
+                })}
+              </Group>
+            )}
           </Stack>
         </Card>
 
@@ -426,6 +485,43 @@ export default function KnowledgeFrameworkDetail() {
             </Group>
           </Stack>
         </Modal>
+
+        {/* 复制为我的框架（本地） */}
+        <Group justify="flex-end">
+          <Button
+            variant="light"
+            onClick={async () => {
+              try {
+                if (typeof window !== 'undefined' && (window as any).__TAURI__) {
+                  // @ts-ignore
+                  const { invoke } = await import('@tauri-apps/api/core');
+                  const payload = {
+                    id: '',
+                    name: framework.title,
+                    title: framework.title,
+                    description: framework.description,
+                    domain: framework.domain,
+                    version: framework.version,
+                    is_public: false,
+                    local_only: true,
+                    updated_at: Date.now(),
+                    created_at: Date.now(),
+                    tags: ((framework as any).tags || []).map((t: any) => t.id || t).filter(Boolean),
+                    root_nodes: [],
+                  } as any;
+                  await invoke('save_knowledge_framework', { framework: payload });
+                  notifications.show({ title: '已复制为我的框架', message: '已保存到本地', color: 'green' });
+                } else {
+                  notifications.show({ title: '仅桌面支持', message: '复制为我的框架需在桌面端使用', color: 'yellow' });
+                }
+              } catch {
+                notifications.show({ title: '操作失败', message: '保存到本地失败', color: 'red' });
+              }
+            }}
+          >
+            复制为我的框架（本地）
+          </Button>
+        </Group>
       </Stack>
     </PageLayout>
   );

@@ -53,7 +53,7 @@ export const MemoryCreator: React.FC<MemoryCreatorProps> = ({
   onMemoryCreated,
   onCancel
 }) => {
-  const { createMemory, generateImage } = useMemory();
+  const { memories, createMemory, generateImage } = useMemory();
   
   const [currentStep, setCurrentStep] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -80,6 +80,9 @@ export const MemoryCreator: React.FC<MemoryCreatorProps> = ({
   // AI生成选项
   const [generateAIImage, setGenerateAIImage] = useState(false);
   const [aiImageStyle, setAiImageStyle] = useState<'realistic' | 'artistic' | 'cartoon' | 'vintage'>('artistic');
+  const [aiQuality, setAiQuality] = useState<'draft' | 'standard' | 'high'>('standard');
+  const [aiAspect, setAiAspect] = useState<'1:1' | '16:9' | '9:16' | '4:3'>('16:9');
+  const [saveAsDefault, setSaveAsDefault] = useState(false);
   
   const steps = [
     { label: '基本信息', description: '记忆的标题和内容' },
@@ -99,6 +102,12 @@ export const MemoryCreator: React.FC<MemoryCreatorProps> = ({
     '自然', '动物', '艺术', '科技', '健康', '成长', '挑战', '成功', '失败',
     '第一次', '最后一次', '重要时刻', '日常生活'
   ];
+
+  const peopleSuggestions = React.useMemo(() => {
+    const freq: Record<string, number> = {};
+    memories.forEach(m => (m.people || []).forEach(p => { freq[p] = (freq[p] || 0) + 1; }));
+    return Object.keys(freq).sort((a, b) => freq[b] - freq[a]);
+  }, [memories]);
   
   const handleImageFileChange = (file: File | null) => {
     setImageFile(file);
@@ -127,14 +136,42 @@ export const MemoryCreator: React.FC<MemoryCreatorProps> = ({
             memoryId: memory.id,
             prompt: `${formData.title}: ${formData.content}`,
             style: aiImageStyle,
-            aspectRatio: '16:9',
-            quality: 'standard'
+            aspectRatio: aiAspect,
+            quality: aiQuality
           });
         } catch (error) {
           console.error('Failed to generate AI image:', error);
         } finally {
           setGeneratingImage(false);
         }
+      }
+
+      if (saveAsDefault) {
+        try {
+          if (typeof window !== 'undefined' && (window as any).__TAURI__) {
+            // @ts-ignore dynamic import only in Tauri runtime
+            const { invoke } = await import('@tauri-apps/api/core');
+            const current = await invoke<any>('get_settings');
+            await invoke('save_settings', { settings: { ...current, image_style_default: aiImageStyle, image_aspect_default: aiAspect } });
+          } else {
+            // Web 环境：调用 tRPC settings.update
+            const baseUrl = window.location.origin;
+            await fetch(`${baseUrl}/api/trpc/${encodeURIComponent('settings.update')}?batch=1`, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              credentials: 'include',
+              body: JSON.stringify([
+                {
+                  id: '1',
+                  json: {
+                    imageStyleDefault: aiImageStyle,
+                    imageAspectDefault: aiAspect,
+                  },
+                },
+              ]),
+            });
+          }
+        } catch {}
       }
       
       notifications.show({
@@ -205,7 +242,10 @@ export const MemoryCreator: React.FC<MemoryCreatorProps> = ({
               label="发生日期"
               description="这个记忆发生的日期"
               value={formData.date}
-              onChange={(date) => setFormData({ ...formData, date: date || new Date() })}
+              onChange={(d) => {
+                const nd = d && typeof d !== 'string' ? (d as Date) : new Date();
+                setFormData({ ...formData, date: nd });
+              }}
             />
             
             <TextInput
@@ -220,17 +260,10 @@ export const MemoryCreator: React.FC<MemoryCreatorProps> = ({
               label="相关人物"
               description="参与这个记忆的人物"
               placeholder="添加相关的人物"
-              data={formData.people || []}
+              data={peopleSuggestions}
               value={formData.people || []}
               onChange={(value) => setFormData({ ...formData, people: value })}
               searchable
-              creatable
-              getCreateLabel={(query) => `+ 添加 "${query}"`}
-              onCreate={(query) => {
-                const newPeople = [...(formData.people || []), query];
-                setFormData({ ...formData, people: newPeople });
-                return query;
-              }}
               leftSection={<IconUsers size={16} />}
             />
             
@@ -242,13 +275,6 @@ export const MemoryCreator: React.FC<MemoryCreatorProps> = ({
               value={formData.emotions || []}
               onChange={(value) => setFormData({ ...formData, emotions: value })}
               searchable
-              creatable
-              getCreateLabel={(query) => `+ 添加 "${query}"`}
-              onCreate={(query) => {
-                const newEmotions = [...(formData.emotions || []), query];
-                setFormData({ ...formData, emotions: newEmotions });
-                return query;
-              }}
               leftSection={<IconHeart size={16} />}
             />
             
@@ -260,13 +286,6 @@ export const MemoryCreator: React.FC<MemoryCreatorProps> = ({
               value={formData.tags || []}
               onChange={(value) => setFormData({ ...formData, tags: value })}
               searchable
-              creatable
-              getCreateLabel={(query) => `+ 添加 "${query}"`}
-              onCreate={(query) => {
-                const newTags = [...(formData.tags || []), query];
-                setFormData({ ...formData, tags: newTags });
-                return query;
-              }}
               leftSection={<IconTag size={16} />}
             />
             
@@ -350,19 +369,36 @@ export const MemoryCreator: React.FC<MemoryCreatorProps> = ({
                       </Button>
                       
                       {generateAIImage && (
-                        <Select
-                          placeholder="选择风格"
-                          value={aiImageStyle}
-                          onChange={(value) => setAiImageStyle(value as any)}
-                          data={[
-                            { value: 'realistic', label: '写实风格' },
-                            { value: 'artistic', label: '艺术风格' },
-                            { value: 'cartoon', label: '卡通风格' },
-                            { value: 'vintage', label: '复古风格' }
-                          ]}
-                          size="sm"
-                          w={120}
-                        />
+                        <>
+                          <Select
+                            placeholder="选择风格"
+                            value={aiImageStyle}
+                            onChange={(value) => setAiImageStyle(value as any)}
+                            data={[
+                              { value: 'realistic', label: '写实风格' },
+                              { value: 'artistic', label: '艺术风格' },
+                              { value: 'cartoon', label: '卡通风格' },
+                              { value: 'vintage', label: '复古风格' }
+                            ]}
+                            size="sm"
+                            w={140}
+                          />
+                          <Select
+                            placeholder="比例"
+                            value={aiAspect}
+                            onChange={(value) => setAiAspect(value as any)}
+                            data={['1:1','16:9','9:16','4:3']}
+                            size="sm"
+                            w={110}
+                          />
+                          <Button
+                            size="xs"
+                            variant={saveAsDefault ? 'filled' : 'light'}
+                            onClick={() => setSaveAsDefault(!saveAsDefault)}
+                          >
+                            {saveAsDefault ? '设为默认（已选）' : '设为默认'}
+                          </Button>
+                        </>
                       )}
                     </Group>
                   </Stack>

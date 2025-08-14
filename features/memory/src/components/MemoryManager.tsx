@@ -54,6 +54,8 @@ import {
 import { notifications } from '@mantine/notifications';
 import { useMemory } from '../hooks/useMemory';
 import { Memory, MemoryFilter } from '../types';
+import { AwakenPanel } from './AwakenPanel';
+import { RadioPanel } from './RadioPanel';
 
 interface MemoryManagerProps {
   onMemorySelect?: (memory: Memory) => void;
@@ -72,18 +74,67 @@ export const MemoryManager: React.FC<MemoryManagerProps> = ({
     searchMemories,
     generateImage,
     generateVideo,
-    loadMemories
+    loadMemories,
+    exportTimelineJson,
+    syncUp,
+    syncDown
   } = useMemory();
 
   const [activeTab, setActiveTab] = useState('list');
   // 创建改为二级页面
   const [filterModalOpen, setFilterModalOpen] = useState(false);
+  const [filterSyncScope, setFilterSyncScope] = useState<'all' | 'filtered'>('all');
+  const [conflictModalOpen, setConflictModalOpen] = useState(false);
+  const [mergeCandidates, setMergeCandidates] = useState<Memory[]>([]);
+  const [mergeSelections, setMergeSelections] = useState<Record<string, 'local' | 'remote'>>({});
+  const [sortBy, setSortBy] = useState<'date' | 'title' | 'created'>('date');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [selectedMemory, setSelectedMemory] = useState<Memory | null>(null);
   const [viewModalOpen, setViewModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [currentFilter, setCurrentFilter] = useState<MemoryFilter>({});
   const [generatingImage, setGeneratingImage] = useState<string | null>(null);
   const [generatingVideo, setGeneratingVideo] = useState(false);
+  const [bgmPath, setBgmPath] = useState<string | null>(null);
+  const [isAuthorized, setIsAuthorized] = useState<boolean>(true);
+  const [syncModalOpen, setSyncModalOpen] = useState(false);
+  const [syncStrategy, setSyncStrategy] = useState<'local' | 'remote'>('local');
+
+  // 简易鉴权（桌面端）：未登录则提示登录
+  React.useEffect(() => {
+    (async () => {
+      try {
+        if (typeof window === 'undefined') return;
+        // Web 环境：检查 localStorage
+        if (!(window as any).__TAURI__) {
+          const u = localStorage.getItem('auth_user');
+          const t = localStorage.getItem('auth_token');
+          const e = localStorage.getItem('auth_expires');
+          setIsAuthorized(!!u && !!t && !!e && Date.now() < parseInt(e || '0'));
+          // 读取排序持久化
+          const sb = localStorage.getItem('memory_sort_by') as any;
+          const so = localStorage.getItem('memory_sort_order') as any;
+          if (sb === 'date' || sb === 'title' || sb === 'created') setSortBy(sb);
+          if (so === 'asc' || so === 'desc') setSortOrder(so);
+          return;
+        }
+        const { invoke } = await import('@tauri-apps/api/core');
+        const auth = await invoke<any>('get_auth_data');
+        setIsAuthorized(!!auth);
+      } catch {
+        setIsAuthorized(true);
+      }
+    })();
+  }, []);
+
+  // 排序选项持久化
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      localStorage.setItem('memory_sort_by', sortBy);
+      localStorage.setItem('memory_sort_order', sortOrder);
+    } catch {}
+  }, [sortBy, sortOrder]);
 
   // 表单状态
   const [formData, setFormData] = useState({
@@ -146,12 +197,133 @@ export const MemoryManager: React.FC<MemoryManagerProps> = ({
         title: '我的记忆视频',
         duration: 60,
         transitions: 'fade',
-        voiceoverText: '这些是我珍贵的记忆...'
+        voiceoverText: '这些是我珍贵的记忆...',
+        backgroundMusic: bgmPath || undefined,
       });
     } catch (error) {
       // Error handled in hook
     } finally {
       setGeneratingVideo(false);
+    }
+  };
+
+  const pickBgm = async () => {
+    try {
+      if (typeof window === 'undefined' || !(window as any).__TAURI__) {
+        notifications.show({ title: '仅支持桌面端', message: '请选择在桌面端使用本地 BGM', color: 'orange' });
+        return;
+      }
+      // @ts-ignore dynamic import available only in Tauri runtime
+      const { open } = await import('@tauri-apps/api/dialog');
+      const selected = await open({ multiple: false, filters: [{ name: 'Audio', extensions: ['mp3','wav','m4a','flac','aac','ogg'] }] });
+      if (typeof selected === 'string') setBgmPath(selected);
+    } catch (e) {
+      notifications.show({ title: '选择失败', message: '无法选择本地音频', color: 'red' });
+    }
+  };
+
+  const doSync = async () => {
+    try {
+      if (syncStrategy === 'local') {
+        if (filterSyncScope === 'filtered') {
+          const filtered = memories.filter((m) => {
+            if (currentFilter.location && m.location !== currentFilter.location) return false;
+            if (currentFilter.people && currentFilter.people.length > 0) {
+              if (!currentFilter.people.some((p) => m.people.includes(p))) return false;
+            }
+            if (currentFilter.emotions && currentFilter.emotions.length > 0) {
+              if (!currentFilter.emotions.some((e) => m.emotions.includes(e))) return false;
+            }
+            if (currentFilter.dateRange?.start && new Date(m.date) < new Date(currentFilter.dateRange.start)) return false;
+            if (currentFilter.dateRange?.end && new Date(m.date) > new Date(currentFilter.dateRange.end)) return false;
+            return true;
+          });
+          await syncUp(filtered);
+        } else {
+          await syncUp();
+        }
+      } else if (syncStrategy === 'remote') {
+        await syncDown();
+      } else if (syncStrategy === 'merge') {
+        // 拉取远端，构造逐项合并候选
+        const remote = await syncDown({ limit: 500 });
+        const byId = new Map<string, Memory>();
+        memories.forEach((m) => byId.set(m.id, m));
+        const candidates: Memory[] = [];
+        const selections: Record<string, 'local' | 'remote'> = {};
+        // 精准拉取每条远端详情
+        const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
+        const trpcCall = async (id: string) => {
+          const res = await fetch(`${baseUrl}/api/trpc/${encodeURIComponent('memory.get')}?batch=1`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify([{ id: '1', json: { id } }]),
+          });
+          if (!res.ok) return null;
+          const data = await res.json();
+          return data?.[0]?.result?.data ?? null;
+        };
+        for (const r of (Array.isArray(remote) ? remote : [])) {
+          const local = byId.get(r.id);
+          if (!local) continue;
+          const remoteFull = await trpcCall(r.id);
+          if (!remoteFull) continue;
+          const diff = local.title !== remoteFull.title || local.content !== remoteFull.content || new Date(local.date).getTime() !== new Date(remoteFull.date).getTime() || (local.location || '') !== (remoteFull.location || '') || (local.people || []).join('|') !== (remoteFull.people || []).join('|') || (local.tags || []).join('|') !== (remoteFull.tags || []).join('|') || (local.emotions || []).join('|') !== (remoteFull.emotions || []).join('|') || local.visibility !== (remoteFull.visibility || 'private');
+          if (diff) {
+            candidates.push({ ...local } as Memory);
+            selections[r.id] = 'local';
+          }
+        }
+        setMergeCandidates(candidates);
+        setMergeSelections(selections);
+        setConflictModalOpen(true);
+      }
+      setSyncModalOpen(false);
+      notifications.show({ title: '同步完成', message: '已完成同步（仅非媒体字段）', color: 'green' });
+    } catch (e) {
+      notifications.show({ title: '同步失败', message: '请稍后重试', color: 'red' });
+    }
+  };
+
+  const applyMerge = async () => {
+    try {
+      // 逐项合并：根据选择应用本地或远端值
+      for (const cand of mergeCandidates) {
+        const choice = mergeSelections[cand.id];
+        if (choice === 'remote') {
+          // 使用精确 memory.get 代替模糊搜索
+          const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
+          try {
+            const res = await fetch(`${baseUrl}/api/trpc/${encodeURIComponent('memory.get')}?batch=1`, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              credentials: 'include',
+              body: JSON.stringify([{ id: '1', json: { id: cand.id } }]),
+            });
+            if (res.ok) {
+              const data = await res.json();
+              const remote = data?.[0]?.result?.data;
+              if (remote) {
+                await updateMemory(cand.id, {
+                  title: remote.title,
+                  content: remote.content,
+                  date: new Date(remote.date),
+                  location: remote.location ?? undefined,
+                  people: remote.people ?? [],
+                  tags: remote.tags ?? [],
+                  emotions: remote.emotions ?? [],
+                  visibility: remote.visibility ?? 'private',
+                });
+              }
+            }
+          } catch {}
+        }
+      }
+      setConflictModalOpen(false);
+      notifications.show({ title: '合并完成', message: '已应用逐项合并', color: 'green' });
+    } catch {
+      notifications.show({ title: '合并失败', message: '请稍后重试', color: 'red' });
     }
   };
 
@@ -172,7 +344,7 @@ export const MemoryManager: React.FC<MemoryManagerProps> = ({
   };
 
   const handleApplyFilter = async () => {
-    await loadMemories(currentFilter);
+    await loadMemories({ ...currentFilter, sortBy, sortOrder });
     setFilterModalOpen(false);
   };
 
@@ -198,6 +370,16 @@ export const MemoryManager: React.FC<MemoryManagerProps> = ({
       day: 'numeric'
     }).format(date);
   };
+
+  if (!isAuthorized) {
+    return (
+      <Center h={400}>
+        <Stack align="center">
+          <Text c="dimmed">该功能需要登录后使用，请先登录。</Text>
+        </Stack>
+      </Center>
+    );
+  }
 
   if (loading) {
     return (
@@ -230,7 +412,45 @@ export const MemoryManager: React.FC<MemoryManagerProps> = ({
             onClick={() => handleGenerateVideo(memories.map(m => m.id))}
             loading={generatingVideo}
           >
-            生成视频
+            导出视频 MP4
+          </Button>
+          <Button
+            variant="light"
+            onClick={() => {
+              const withImages = memories.filter((m) => !!m.imageUrl);
+              if (withImages.length === 0) {
+                notifications.show({ title: '缺少图片', message: '请先为记忆生成/添加图片后再导出视频', color: 'orange' });
+                return;
+              }
+              handleGenerateVideo(withImages.map((m) => m.id));
+            }}
+          >
+            导出筛选视频
+          </Button>
+          <Button variant="default" onClick={() => setSyncModalOpen(true)}>
+            手动同步
+          </Button>
+          <Button variant="light" onClick={pickBgm}>
+            {bgmPath ? '已选择 BGM' : '选择 BGM'}
+          </Button>
+          <Button
+            variant="light"
+            leftSection={<IconDownload size={16} />}
+            onClick={() => exportTimelineJson(memories)}
+          >
+            导出时间线 JSON
+          </Button>
+          <Button
+            variant="light"
+            leftSection={<IconDownload size={16} />}
+            onClick={() => {
+              const subset = memories
+                .filter((m) => !currentFilter.location || m.location?.includes(currentFilter.location || ''))
+                .sort((a, b) => a.date.getTime() - b.date.getTime());
+              exportTimelineJson(subset, 'timeline-filtered');
+            }}
+          >
+            导出筛选 JSON
           </Button>
           <Button
             leftSection={<IconPlus size={16} />}
@@ -317,6 +537,12 @@ export const MemoryManager: React.FC<MemoryManagerProps> = ({
           </Tabs.Tab>
           <Tabs.Tab value="gallery" leftSection={<IconPhoto size={16} />}>
             图片画廊
+          </Tabs.Tab>
+          <Tabs.Tab value="awaken" leftSection={<IconBrain size={16} />}>
+            唤醒
+          </Tabs.Tab>
+          <Tabs.Tab value="radio" leftSection={<IconMicrophone size={16} />}>
+            电台
           </Tabs.Tab>
         </Tabs.List>
 
@@ -569,6 +795,18 @@ export const MemoryManager: React.FC<MemoryManagerProps> = ({
               ))}
           </Grid>
         </Tabs.Panel>
+
+        <Tabs.Panel value="awaken" pt="md">
+          <Card shadow="sm" padding="lg" radius="md" withBorder>
+            <AwakenPanel />
+          </Card>
+        </Tabs.Panel>
+
+        <Tabs.Panel value="radio" pt="md">
+          <Card shadow="sm" padding="lg" radius="md" withBorder>
+            <RadioPanel />
+          </Card>
+        </Tabs.Panel>
       </Tabs>
 
       {/* 创建记忆改为二级页面 /memory/new */}
@@ -689,11 +927,72 @@ export const MemoryManager: React.FC<MemoryManagerProps> = ({
         size="md"
       >
         <Stack gap="md">
+          <Group grow>
+            <DateInput
+              label="开始日期"
+              value={(currentFilter.dateRange?.start as Date | null) ?? null}
+              onChange={(d) => {
+                const start = (d as Date | null) ?? (currentFilter.dateRange?.start as Date | undefined) ?? new Date();
+                const end = (currentFilter.dateRange?.end as Date | undefined) ?? start;
+                setCurrentFilter({ ...currentFilter, dateRange: { start, end } });
+              }}
+            />
+            <DateInput
+              label="结束日期"
+              value={(currentFilter.dateRange?.end as Date | null) ?? null}
+              onChange={(d) => {
+                const end = (d as Date | null) ?? (currentFilter.dateRange?.end as Date | undefined) ?? new Date();
+                const start = (currentFilter.dateRange?.start as Date | undefined) ?? end;
+                setCurrentFilter({ ...currentFilter, dateRange: { start, end } });
+              }}
+            />
+          </Group>
           <TextInput
             label="地点"
             placeholder="筛选特定地点的记忆"
             value={currentFilter.location || ''}
             onChange={(e) => setCurrentFilter({ ...currentFilter, location: e.currentTarget.value })}
+          />
+          <MultiSelect
+            label="标签"
+            placeholder="选择标签"
+            data={Array.from(new Set(memories.flatMap((m) => m.tags))).sort()}
+            value={currentFilter.tags || []}
+            onChange={(v) => setCurrentFilter({ ...currentFilter, tags: v })}
+            searchable
+            leftSection={<IconTag size={16} />}
+          />
+          <MultiSelect
+            label="情感"
+            placeholder="选择情感"
+            data={Array.from(new Set(memories.flatMap((m) => m.emotions))).sort()}
+            value={currentFilter.emotions || []}
+            onChange={(v) => setCurrentFilter({ ...currentFilter, emotions: v })}
+            searchable
+            leftSection={<IconHeart size={16} />}
+          />
+          <Group grow>
+            <Select
+              label="排序字段"
+              data={[{ value: 'date', label: '日期' }, { value: 'title', label: '标题' }, { value: 'created', label: '创建时间' }]}
+              value={sortBy}
+              onChange={(v) => setSortBy(((v as any) || 'date'))}
+            />
+            <Select
+              label="排序方向"
+              data={[{ value: 'desc', label: '降序' }, { value: 'asc', label: '升序' }]}
+              value={sortOrder}
+              onChange={(v) => setSortOrder(((v as any) || 'desc'))}
+            />
+          </Group>
+          <MultiSelect
+            label="相关人物"
+            placeholder="选择相关人物"
+            data={Array.from(new Set(memories.flatMap((m) => m.people))).sort()}
+            value={currentFilter.people || []}
+            onChange={(v) => setCurrentFilter({ ...currentFilter, people: v })}
+            searchable
+            leftSection={<IconUsers size={16} />}
           />
           
           <Group justify="flex-end" mt="md">
@@ -703,6 +1002,81 @@ export const MemoryManager: React.FC<MemoryManagerProps> = ({
             <Button onClick={handleApplyFilter}>
               应用筛选
             </Button>
+          </Group>
+        </Stack>
+      </Modal>
+
+      {/* 同步策略选择 */}
+      <Modal
+        opened={syncModalOpen}
+        onClose={() => setSyncModalOpen(false)}
+        title="选择同步策略"
+        size="sm"
+      >
+        <Stack gap="md">
+          <Text c="dimmed" size="sm">
+            仅同步非媒体字段。请选择本地与远端的冲突处理策略：
+          </Text>
+          <Select
+            label="策略"
+            data={[
+              { value: 'local', label: '以上行为准（将本地元数据上行覆盖）' },
+              { value: 'remote', label: '以下行为准（从服务器下行覆盖本地）' },
+              { value: 'merge', label: '逐项合并（逐条选择保留本地/远端）' },
+            ]}
+            value={syncStrategy}
+            onChange={(v) => setSyncStrategy(((v as any) || 'local'))}
+          />
+          {syncStrategy === 'local' && (
+            <Select
+              label="同步范围"
+              data={[
+                { value: 'all', label: '全部本地记忆' },
+                { value: 'filtered', label: '仅当前筛选结果' },
+              ]}
+              value={filterSyncScope}
+              onChange={(v) => setFilterSyncScope(((v as any) || 'all'))}
+            />
+          )}
+          <Group justify="flex-end">
+            <Button variant="light" onClick={() => setSyncModalOpen(false)}>取消</Button>
+            <Button onClick={doSync}>开始同步</Button>
+          </Group>
+        </Stack>
+      </Modal>
+
+      {/* 冲突逐项合并 */}
+      <Modal
+        opened={conflictModalOpen}
+        onClose={() => setConflictModalOpen(false)}
+        title="逐项合并冲突"
+        size="lg"
+      >
+        <Stack gap="md">
+          {mergeCandidates.length === 0 ? (
+            <Text c="dimmed">没有需要合并的条目</Text>
+          ) : (
+            mergeCandidates.map((m) => (
+              <Card key={m.id} withBorder>
+                <Stack gap="xs">
+                  <Text fw={500}>{m.title}</Text>
+                  <Text size="sm" c="dimmed" lineClamp={2}>{m.content}</Text>
+                  <Group>
+                    <Select
+                      label="选择保留"
+                      data={[{ value: 'local', label: '保留本地' }, { value: 'remote', label: '保留远端' }]}
+                      value={mergeSelections[m.id] || 'local'}
+                      onChange={(v) => setMergeSelections((s) => ({ ...s, [m.id]: ((v as any) || 'local') }))}
+                      w={180}
+                    />
+                  </Group>
+                </Stack>
+              </Card>
+            ))
+          )}
+          <Group justify="flex-end">
+            <Button variant="light" onClick={() => setConflictModalOpen(false)}>取消</Button>
+            <Button onClick={applyMerge}>应用合并</Button>
           </Group>
         </Stack>
       </Modal>

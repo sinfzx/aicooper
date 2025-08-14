@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useMemo, useState } from 'react'
 import {
   Stack,
   Group,
@@ -15,7 +15,9 @@ import {
   Paper,
   Divider,
   Modal,
-  Tabs
+  Tabs,
+  MultiSelect,
+  Switch
 } from '@mantine/core';
 import {
   IconTemplate,
@@ -24,7 +26,9 @@ import {
   IconEye,
   IconEdit,
   IconPlus,
-  IconRobot
+  IconRobot,
+  IconUpload,
+  IconDownload
 } from '@tabler/icons-react';
 import { notifications } from '@mantine/notifications';
 // 暂时注释掉PageLayout导入，直接使用Stack布局
@@ -36,51 +40,65 @@ type TemplateItem = {
   description: string;
   category: string;
   content: string; // API 字段名为 content
+  localOnly?: boolean;
+  serverId?: string | null;
 }
+
+import { usePromptTemplate } from '../hooks/usePromptTemplate';
+import { useTags } from '../hooks/useTags';
 
 export const PromptTemplateManager: React.FC = () => {
   const [selectedCategory, setSelectedCategory] = useState<string>('全部')
   const [searchTerm, setSearchTerm] = useState<string>('')
   const [selectedTemplate, setSelectedTemplate] = useState<TemplateItem | null>(null)
   const [viewModalOpen, setViewModalOpen] = useState(false)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [templates, setTemplates] = useState<TemplateItem[]>([])
+  const { templates, loading, error, syncTemplate, downloadTemplate } = usePromptTemplate();
+  const API_BASE = (
+    ((globalThis as any).process?.env?.NEXT_PUBLIC_API_BASE_URL as string | undefined) ||
+    'http://localhost:3001'
+  ).replace(/\/$/, '');
+
+  const confirmUpload = async (tpl: any) => {
+    try {
+      if (!tpl?.serverId) return true;
+      const res = await fetch(`${API_BASE}/api/prompt-templates/${tpl.serverId}`);
+      const data = await res.json();
+      if (!res.ok || !data?.success) return true;
+      const remoteUpdated = new Date(data.data.updatedAt || 0).getTime();
+      const localUpdated = new Date(tpl.updatedAt || 0).getTime();
+      if (remoteUpdated > localUpdated) {
+        return window.confirm('服务器版本较新，继续上传将覆盖服务器最新内容。是否继续上传？');
+      }
+      return true;
+    } catch {
+      return true;
+    }
+  };
+
+  const confirmDownload = async (tpl: any) => {
+    try {
+      if (!tpl?.serverId) return true;
+      const res = await fetch(`${API_BASE}/api/prompt-templates/${tpl.serverId}`);
+      const data = await res.json();
+      if (!res.ok || !data?.success) return true;
+      const remoteUpdated = new Date(data.data.updatedAt || 0).getTime();
+      const localUpdated = new Date(tpl.updatedAt || 0).getTime();
+      if (localUpdated > remoteUpdated) {
+        return window.confirm('本地版本较新，继续下载将覆盖本地内容。是否继续下载？');
+      }
+      return true;
+    } catch {
+      return true;
+    }
+  };
+  const { tags: allTags } = useTags();
+  const [tagFilter, setTagFilter] = useState<string[]>([]);
+  const [onlyLocal, setOnlyLocal] = useState<boolean>(false);
   // 原弹窗创建入口已移除，改为二级页面
 
   const categories = ['全部', 'general', 'writing', 'coding', 'analysis', 'translation', 'education']
 
-  useEffect(() => {
-    const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001').replace(/\/$/, '')
-    const controller = new AbortController()
-    const load = async () => {
-      setLoading(true)
-      setError(null)
-      try {
-        const params = new URLSearchParams()
-        // 未登录默认拉取公开
-        params.set('public', 'true')
-        params.set('page', '1')
-        params.set('pageSize', '50')
-        const res = await fetch(`${API_BASE}/api/prompt-templates?${params.toString()}`, { signal: controller.signal })
-        const data = await res.json()
-        if (data?.success && Array.isArray(data?.data?.items)) {
-          setTemplates(data.data.items)
-        } else if (Array.isArray(data)) {
-          setTemplates(data as TemplateItem[])
-        } else {
-          throw new Error(data?.error || 'Invalid data format')
-        }
-      } catch (e: any) {
-        setError(e?.message || 'Failed to load templates')
-        setTemplates([])
-      } finally {
-        setLoading(false)
-      }
-    }
-    load()
-    return () => controller.abort()
-  }, [])
+  // 数据加载由 usePromptTemplate 内部完成
 
   const filteredTemplates = useMemo(() => {
     const list = Array.isArray(templates) ? templates : []
@@ -88,9 +106,14 @@ export const PromptTemplateManager: React.FC = () => {
       const matchesCategory = selectedCategory === '全部' || template.category === selectedCategory
       const searchLower = searchTerm.toLowerCase()
       const matchesSearch = template.title.toLowerCase().includes(searchLower) || (template.description || '').toLowerCase().includes(searchLower)
-      return matchesCategory && matchesSearch
+      const matchesTags = tagFilter.length === 0 || (
+        Array.isArray((template as any).tags) && (template as any).tags.length > 0 &&
+        tagFilter.some(id => (template as any).tags.includes(id) || (template as any).tags.includes((allTags || []).find((t: any) => t.id === id)?.name))
+      )
+      const matchesOnlyLocal = !onlyLocal || !!template.localOnly
+      return matchesCategory && matchesSearch && matchesTags && matchesOnlyLocal
     })
-  }, [templates, selectedCategory, searchTerm])
+  }, [templates, selectedCategory, searchTerm, tagFilter, allTags, onlyLocal])
 
   const handleCopyTemplate = (template: string) => {
     navigator.clipboard.writeText(template)
@@ -103,6 +126,11 @@ export const PromptTemplateManager: React.FC = () => {
 
   return (
     <Stack gap="lg" p="md">
+      {error && (
+        <Card shadow="sm" padding="sm" withBorder>
+          <Text c="red">{error}</Text>
+        </Card>
+      )}
       {/* 头部操作栏 */}
       <Group justify="space-between">
         <Group>
@@ -148,6 +176,16 @@ export const PromptTemplateManager: React.FC = () => {
           leftSection={<IconSearch size={16} />}
           style={{ flex: 1 }}
         />
+        <MultiSelect
+          placeholder="按标签筛选"
+          data={(allTags || []).map((t: any) => ({ value: t.id, label: t.parent ? `${t.parent.name} / ${t.name}` : t.name }))}
+          value={tagFilter}
+          onChange={setTagFilter}
+          searchable
+          clearable
+          style={{ minWidth: 260 }}
+        />
+        <Switch label="仅显示本地" checked={onlyLocal} onChange={(e) => setOnlyLocal(e.currentTarget.checked)} />
       </Group>
 
       {/* 分类标签 */}
@@ -186,10 +224,18 @@ export const PromptTemplateManager: React.FC = () => {
             <Grid.Col key={template.id} span={{ base: 12, md: 6, lg: 4 }}>
               <Card shadow="sm" padding="lg" radius="md" withBorder h="100%">
                 <Stack gap="sm" h="100%">
-                  <Group justify="space-between">
+                   <Group justify="space-between">
                     <Badge variant="light" color="blue" size="sm">
                       {template.category}
                     </Badge>
+                     {template.localOnly ? (
+                       <Badge variant="light" color="orange" size="sm">本地</Badge>
+                     ) : (
+                       <Badge variant="light" color="green" size="sm">已同步</Badge>
+                     )}
+                     {(template as any).isBlocked && (
+                       <Badge variant="light" color="red" size="sm">已屏蔽</Badge>
+                     )}
                   </Group>
 
                   <Box style={{ flex: 1 }}>
@@ -203,6 +249,28 @@ export const PromptTemplateManager: React.FC = () => {
                         {template.content}
                       </Text>
                     </Paper>
+
+                    {/* 标签展示与聚合筛选 */}
+                    {Array.isArray((template as any).tags) && (template as any).tags.length > 0 && (
+                      <Group gap="xs" wrap="wrap">
+                        {(template as any).tags.map((tg: any, idx: number) => {
+                          const id = tg && typeof tg === 'object' ? tg.id : tg;
+                          const found = (allTags || []).find((t: any) => t.id === id || t.name === id);
+                          const label = found ? (found.parent ? `${found.parent.name} / ${found.name}` : found.name) : (tg?.name || tg);
+                          return (
+                            <Badge
+                              key={idx}
+                              size="xs"
+                              variant="light"
+                              onClick={() => setTagFilter((prev) => Array.from(new Set([...(prev || []), id])))}
+                              style={{ cursor: 'pointer' }}
+                            >
+                              {label}
+                            </Badge>
+                          );
+                        })}
+                      </Group>
+                    )}
                   </Box>
 
                   <Divider />
@@ -225,11 +293,54 @@ export const PromptTemplateManager: React.FC = () => {
                         variant="light"
                         size="sm"
                         onClick={() => {
-                          // TODO: 编辑功能
+                          try {
+                            if (typeof window !== 'undefined') {
+                              const draft = {
+                                id: template.id,
+                                title: template.title,
+                                description: template.description,
+                                category: template.category,
+                                content: (template as any).content,
+                                parameters: (template as any).parameters || [],
+                                article: (template as any).article || '',
+                                tags: (template as any).tags || [],
+                              } as any;
+                              window.localStorage.setItem('templateDraft', JSON.stringify(draft));
+                              window.location.href = '/templates/new?edit=1';
+                            }
+                          } catch {}
                         }}
                       >
                         <IconEdit size={14} />
                       </ActionIcon>
+                      {template.localOnly && (
+                        <ActionIcon
+                          variant="light"
+                          color="blue"
+                          size="sm"
+                          onClick={async () => {
+                            if (await confirmUpload(template)) {
+                              await syncTemplate(template.id);
+                            }
+                          }}
+                        >
+                          <IconUpload size={14} />
+                        </ActionIcon>
+                      )}
+                      {!template.localOnly && (
+                        <ActionIcon
+                          variant="light"
+                          color="teal"
+                          size="sm"
+                          onClick={async () => {
+                            if (await confirmDownload(template)) {
+                              await downloadTemplate(template.serverId || template.id);
+                            }
+                          }}
+                        >
+                          <IconDownload size={14} />
+                        </ActionIcon>
+                      )}
                     </Group>
                     
                     <Button

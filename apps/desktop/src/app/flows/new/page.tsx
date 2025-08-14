@@ -11,6 +11,7 @@ export default function NewFlowPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const mode = searchParams?.get('mode');
+  const isEdit = searchParams?.get('edit') === '1';
 
   return (
     <PageLayout

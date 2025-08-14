@@ -15,6 +15,7 @@ mod ai_service;
 use models::*;
 use database::Database;
 use ai_service::AIService;
+use std::process::Command as SysCommand;
 
 // 应用状态
 #[allow(dead_code)]
@@ -34,6 +35,16 @@ pub struct AppSettings {
     pub max_tokens: u32,
     pub temperature: f32,
     pub enable_telemetry: bool,
+    #[serde(default)]
+    pub default_save_targets: DefaultSaveTargets,
+    // Memory related preferences (desktop-only)
+    pub birth_year: Option<i32>,
+    pub birth_region: Option<String>,
+    pub memory_language: Option<String>,
+    pub image_style_default: Option<String>,
+    pub image_aspect_default: Option<String>,
+    // radio playback progress
+    pub radio_progress: Option<RadioProgress>,
 }
 
 // KnowledgeFramework is now defined in models.rs
@@ -80,9 +91,205 @@ impl Default for AppSettings {
             max_tokens: 4000,
             temperature: 0.7,
             enable_telemetry: false,
+            default_save_targets: DefaultSaveTargets::default(),
+            birth_year: None,
+            birth_region: None,
+            memory_language: Some("zh-CN".to_string()),
+            image_style_default: Some("artistic".to_string()),
+            image_aspect_default: Some("16:9".to_string()),
+            radio_progress: None,
         }
     }
 }
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct RadioProgress {
+    pub year: i32,
+    pub seconds: f32,
+}
+
+fn ensure_memory_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let base = ensure_data_dir(app)?;
+    let mem_dir = base.join("memory");
+    if !mem_dir.exists() {
+        fs::create_dir_all(&mem_dir)
+            .map_err(|e| format!("Failed to create memory directory: {}", e))?;
+    }
+    Ok(mem_dir)
+}
+
+#[tauri::command]
+async fn save_keywords_file(app: AppHandle, file_name: String, content_json: String) -> Result<String, String> {
+    let mem_dir = ensure_memory_dir(&app)?;
+    let awaken_dir = mem_dir.join("awaken");
+    if !awaken_dir.exists() {
+        fs::create_dir_all(&awaken_dir)
+            .map_err(|e| format!("Failed to create awaken dir: {}", e))?;
+    }
+    let path = awaken_dir.join(format!("{}.json", file_name));
+    fs::write(&path, content_json).map_err(|e| format!("Failed to write keywords file: {}", e))?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+async fn list_keywords_files(app: AppHandle) -> Result<Vec<String>, String> {
+    let mem_dir = ensure_memory_dir(&app)?;
+    let awaken_dir = mem_dir.join("awaken");
+    if !awaken_dir.exists() {
+        return Ok(vec![]);
+    }
+    let mut files: Vec<String> = vec![];
+    for entry in fs::read_dir(&awaken_dir).map_err(|e| format!("Failed to read awaken dir: {}", e))? {
+        let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
+        let path = entry.path();
+        if path.is_file() {
+            if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
+                files.push(name.to_string());
+            }
+        }
+    }
+    Ok(files)
+}
+
+#[tauri::command]
+async fn save_radio_script_file(app: AppHandle, year: i32, content: String) -> Result<String, String> {
+    let mem_dir = ensure_memory_dir(&app)?;
+    let scripts_dir = mem_dir.join("radio").join("scripts");
+    if !scripts_dir.exists() {
+        fs::create_dir_all(&scripts_dir)
+            .map_err(|e| format!("Failed to create scripts dir: {}", e))?;
+    }
+    let path = scripts_dir.join(format!("{}.txt", year));
+    fs::write(&path, content).map_err(|e| format!("Failed to write script: {}", e))?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+async fn save_radio_audio_file(app: AppHandle, year: i32, base64_audio: String) -> Result<String, String> {
+    let mem_dir = ensure_memory_dir(&app)?;
+    let audio_dir = mem_dir.join("radio").join("audio");
+    if !audio_dir.exists() {
+        fs::create_dir_all(&audio_dir)
+            .map_err(|e| format!("Failed to create audio dir: {}", e))?;
+    }
+    let path = audio_dir.join(format!("{}.mp3", year));
+    let bytes = base64::decode(base64_audio).map_err(|e| format!("Invalid base64: {}", e))?;
+    fs::write(&path, bytes).map_err(|e| format!("Failed to write audio: {}", e))?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct VideoRequest {
+    pub image_paths: Vec<String>,
+    pub audio_path: Option<String>,
+    pub bgm_path: Option<String>,
+    pub out_name: Option<String>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub fps: Option<u32>,
+}
+
+#[tauri::command]
+async fn generate_memory_video(app: AppHandle, request: VideoRequest) -> Result<String, String> {
+    let mem_dir = ensure_memory_dir(&app)?;
+    let videos_dir = mem_dir.join("videos");
+    if !videos_dir.exists() {
+        fs::create_dir_all(&videos_dir)
+            .map_err(|e| format!("Failed to create videos dir: {}", e))?;
+    }
+
+    let width = request.width.unwrap_or(1280);
+    let height = request.height.unwrap_or(720);
+    let fps = request.fps.unwrap_or(30);
+    let out_name = request.out_name.unwrap_or_else(|| format!("memory-video-{}.mp4", chrono::Utc::now().timestamp())) ;
+    let output_path = videos_dir.join(out_name);
+
+    // 生成临时文件列表
+    let list_path = videos_dir.join(format!("frames-{}.txt", chrono::Utc::now().timestamp()));
+    let mut list_content = String::new();
+    for img in &request.image_paths {
+        // 每张图显示 2 秒，可后续参数化
+        list_content.push_str(&format!("file '{}"\n" , img.replace("'", "'\\''")));
+        list_content.push_str("\nduration 2\n");
+    }
+    // 末尾再重复最后一帧
+    if let Some(last) = request.image_paths.last() {
+        list_content.push_str(&format!("file '{}"\n" , last.replace("'", "'\\''")));
+    }
+    fs::write(&list_path, list_content).map_err(|e| format!("Failed to write frames list: {}", e))?;
+
+    // 基础 ffmpeg 命令：图片拼接
+    let mut cmd = SysCommand::new("ffmpeg");
+    cmd.arg("-y")
+        .arg("-f").arg("concat")
+        .arg("-safe").arg("0")
+        .arg("-i").arg(list_path.to_string_lossy().to_string())
+        .arg("-r").arg(format!("{}", fps))
+        .arg("-s").arg(format!("{}x{}", width, height));
+
+    // 旁白音频
+    if let Some(audio) = &request.audio_path {
+        cmd.arg("-i").arg(audio);
+    }
+    // BGM 音频
+    if let Some(bgm) = &request.bgm_path {
+        cmd.arg("-i").arg(bgm);
+    }
+
+    // 音频混流：若有旁白与 BGM 则混音，简单降低 BGM 音量
+    if request.audio_path.is_some() && request.bgm_path.is_some() {
+        cmd.arg("-filter_complex").arg("[1:a]volume=1.0[a1];[2:a]volume=0.3[a2];[a1][a2]amix=inputs=2:duration=longest[aout]")
+           .arg("-map").arg("0:v")
+           .arg("-map").arg("[aout]");
+    } else if request.audio_path.is_some() {
+        cmd.arg("-map").arg("0:v").arg("-map").arg("1:a");
+    } else if request.bgm_path.is_some() {
+        cmd.arg("-map").arg("0:v").arg("-map").arg("1:a");
+    }
+
+    cmd.arg("-c:v").arg("libx264")
+        .arg("-pix_fmt").arg("yuv420p")
+        .arg(output_path.to_string_lossy().to_string());
+
+    let status = cmd.status().map_err(|e| format!("Failed to spawn ffmpeg: {}", e))?;
+    if !status.success() {
+        return Err(format!("ffmpeg exited with status: {:?}", status.code()))
+    }
+
+    // 清理临时文件
+    let _ = fs::remove_file(&list_path);
+
+    Ok(output_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+async fn save_timeline_json(app: AppHandle, file_name: String, content_json: String) -> Result<String, String> {
+    let mem_dir = ensure_memory_dir(&app)?;
+    let exports_dir = mem_dir.join("exports");
+    if !exports_dir.exists() {
+        fs::create_dir_all(&exports_dir)
+            .map_err(|e| format!("Failed to create exports dir: {}", e))?;
+    }
+    let safe_name = if file_name.ends_with(".json") { file_name } else { format!("{}.json", file_name) };
+    let path = exports_dir.join(safe_name);
+    fs::write(&path, content_json).map_err(|e| format!("Failed to write export json: {}", e))?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct DefaultSaveTargets {
+    #[serde(default = "default_local")] pub template: String,
+    #[serde(default = "default_local")] pub flow: String,
+    #[serde(default = "default_local")] pub framework: String,
+}
+
+impl Default for DefaultSaveTargets {
+    fn default() -> Self {
+        Self { template: default_local(), flow: default_local(), framework: default_local() }
+    }
+}
+
+fn default_local() -> String { "local".to_string() }
 
 fn get_app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
@@ -400,6 +607,8 @@ async fn get_knowledge_frameworks(app: AppHandle) -> Result<Vec<KnowledgeFramewo
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct LocalPromptTemplate {
     pub id: String,
+    #[serde(default)]
+    pub server_id: Option<String>,
     pub title: String,
     pub description: String,
     pub category: String,
@@ -465,6 +674,90 @@ async fn delete_local_prompt_template(app: AppHandle, id: String) -> Result<(), 
     let mut templates = if file.exists() { get_local_prompt_templates(app.clone()).await? } else { vec![] };
     templates.retain(|t| t.id != id);
     let content = serde_json::to_string_pretty(&templates).map_err(|e| format!("Failed to serialize templates: {}", e))?;
+    fs::write(&file, content).map_err(|e| format!("Failed to write templates file: {}", e))?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn sync_local_prompt_template_to_server(app: AppHandle, id: String) -> Result<String, String> {
+    let mut list = get_local_prompt_templates(app.clone()).await?;
+    let tpl = list.iter_mut().find(|t| t.id == id).ok_or("Template not found")?;
+    let auth = get_auth_data(app.clone()).await?.ok_or("User not authenticated")?;
+    let client = reqwest::Client::new();
+    let payload = serde_json::json!({
+        "title": tpl.title,
+        "description": tpl.description,
+        "category": tpl.category,
+        "content": tpl.content,
+        "parameters": tpl.parameters.clone().unwrap_or(serde_json::json!([])),
+        "article": tpl.article,
+        "tags": tpl.tags,
+        "isPublic": tpl.is_public,
+        "localOnly": false
+    });
+    let res = client
+        .post("http://localhost:3001/api/prompt-templates")
+        .header("Authorization", format!("Bearer {}", auth.token))
+        .header("Content-Type", "application/json")
+        .body(payload.to_string())
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+    if !res.status().is_success() {
+        let txt = res.text().await.unwrap_or_default();
+        return Err(format!("Sync failed: {}", txt));
+    }
+    let json: serde_json::Value = res.json().await.map_err(|e| format!("Parse failed: {}", e))?;
+    let server_id = json["data"]["id"].as_str().unwrap_or("").to_string();
+    if server_id.is_empty() { return Err("Invalid server id".to_string()); }
+    tpl.server_id = Some(server_id.clone());
+    tpl.local_only = false;
+    tpl.updated_at = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+
+    let data_dir = ensure_data_dir(&app)?;
+    let file = data_dir.join("prompt_templates.json");
+    let content = serde_json::to_string_pretty(&list).map_err(|e| format!("Failed to serialize templates: {}", e))?;
+    fs::write(&file, content).map_err(|e| format!("Failed to write templates file: {}", e))?;
+    Ok(server_id)
+}
+
+#[tauri::command]
+async fn download_prompt_template_from_server(app: AppHandle, server_id: String) -> Result<(), String> {
+    let auth = get_auth_data(app.clone()).await?.ok_or("User not authenticated")?;
+    let client = reqwest::Client::new();
+    let res = client
+        .get(&format!("http://localhost:3001/api/prompt-templates/{}", server_id))
+        .header("Authorization", format!("Bearer {}", auth.token))
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+    if !res.status().is_success() {
+        let txt = res.text().await.unwrap_or_default();
+        return Err(format!("Download failed: {}", txt));
+    }
+    let data: serde_json::Value = res.json().await.map_err(|e| format!("Parse failed: {}", e))?;
+    let t = &data["data"];
+    let mut list = get_local_prompt_templates(app.clone()).await?;
+    let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+    let local = LocalPromptTemplate {
+        id: format!("tmpl_{}", now_ms),
+        server_id: Some(server_id),
+        title: t["title"].as_str().unwrap_or("").to_string(),
+        description: t["description"].as_str().unwrap_or("").to_string(),
+        category: t["category"].as_str().unwrap_or("general").to_string(),
+        content: t["content"].as_str().unwrap_or("").to_string(),
+        parameters: Some(serde_json::json!([])),
+        article: t["article"].as_str().map(|s| s.to_string()),
+        tags: vec![],
+        is_public: t["isPublic"].as_bool().unwrap_or(false),
+        local_only: false,
+        created_at: now_ms,
+        updated_at: now_ms,
+    };
+    list.insert(0, local);
+    let data_dir = ensure_data_dir(&app)?;
+    let file = data_dir.join("prompt_templates.json");
+    let content = serde_json::to_string_pretty(&list).map_err(|e| format!("Failed to serialize templates: {}", e))?;
     fs::write(&file, content).map_err(|e| format!("Failed to write templates file: {}", e))?;
     Ok(())
 }
@@ -755,6 +1048,30 @@ async fn generate_with_pollinations(prompt: String) -> Result<String, String> {
         .map_err(|e| format!("Failed to read response: {}", e))?;
     
     Ok(content)
+}
+
+// 简单抓取 URL 文本内容（用于 URL 摘要/知识框架扩展）
+#[tauri::command]
+async fn fetch_url_text(url: String) -> Result<String, String> {
+    let client = reqwest::Client::new();
+    let res = client
+        .get(&url)
+        .header("User-Agent", "aicooper-tauri/1.0")
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+    if !res.status().is_success() {
+        return Err(format!("Fetch failed: {}", res.status()));
+    }
+    let mut text = res
+        .text()
+        .await
+        .map_err(|e| format!("Read body failed: {}", e))?;
+    // 粗略截断，避免 prompt 过长
+    if text.len() > 8000 {
+        text.truncate(8000);
+    }
+    Ok(text)
 }
 
 // 认证相关结构体
@@ -1114,6 +1431,8 @@ async fn delete_prompt_template(app: AppHandle, id: String) -> Result<(), String
 pub struct CreateKnowledgeFrameworkRequest {
     pub title: String,
     pub description: String,
+    #[serde(default)]
+    pub is_public: Option<bool>,
 }
 
 // 修改知识框架命令以匹配前端接口
@@ -1139,7 +1458,7 @@ async fn create_knowledge_framework(app: AppHandle, framework: CreateKnowledgeFr
         domain: "general".to_string(),
         version: 1,
         is_built_in: false,
-        is_public: false,
+        is_public: framework.is_public.unwrap_or(false),
         local_only: true,
         synced_at: None,
         created_at: chrono::Utc::now(),
@@ -1720,6 +2039,11 @@ pub fn run() {
             test_api_key,
             get_settings,
             save_settings,
+            save_keywords_file,
+            list_keywords_files,
+            save_radio_script_file,
+            save_radio_audio_file,
+            save_timeline_json,
             chat_with_ai,
             get_knowledge_frameworks,
             save_knowledge_framework,
@@ -1748,15 +2072,22 @@ pub fn run() {
             search_memories,
             get_memory_stats,
             generate_memory_image,
+            generate_memory_video,
+            fetch_url_text,
             // 本地模板管理
             get_local_prompt_templates,
             save_local_prompt_template,
             delete_local_prompt_template,
+            sync_local_prompt_template_to_server,
+            download_prompt_template_from_server,
             // 本地流程管理
             get_local_flows,
             save_local_flow,
-            delete_local_flow
+            delete_local_flow,
+            sync_local_flow_to_server,
+            download_flow_from_server
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
 }

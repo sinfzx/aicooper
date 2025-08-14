@@ -115,3 +115,23 @@ alwaysApply: true
   - 启动：`pnpm dev:api`；首启前运行 `pnpm db:push` 或 `pnpm db:migrate`。
   - 内容：每次构建/启动都会执行 `content:generate`，若失败需检查 `apps/api/scripts/generate-content.ts` 与 `features/*/feature.config.ts`。
   - 环境：通过 `@t3-oss/env-nextjs` 校验 `.env`；缺失关键变量禁止启动到生产模式。
+
+## Memory（记忆）功能规则（桌面端优先）
+
+- 登录必需：所有记忆相关功能需登录后可用（桌面端同样要求登录状态）。
+- 桌面端/离线优先：
+  - AI 媒体（图片/关键词词库/年度电台脚本文本与语音/视频）全部在桌面端本地生成与保存；禁止上传到服务器。
+  - 本地媒体路径仅存储在本地库；服务端仅持久化非媒体字段（标题、内容、日期、地点、人物、标签、情感、可见性等）。
+- API 职责（仅元数据）：
+  - 仅提供非媒体字段的 `list/get/create/update/delete`、`search`、`stats`，以及 `syncUp`/`syncDown` 同步能力。
+  - 不提供任何 AI 生成类接口；如存在 `generate-image`/`generate-video` 等端点，标注为废弃并移除/410。
+- AI 服务调用路径（桌面端直连）：
+  - 桌面端直连第三方 AI（如 Pollinations、Stability、DALL·E、ElevenLabs），实现超时、重试、限流与日志；支持用户自配 API Key，失败兜底 Pollinations。
+  - 提示词模板在桌面端参数化，并注入用户设置（出生年份/地区、语言、默认图像风格/尺寸）。
+- 同步/下载（仅非媒体字段）：
+  - 同步需用户主动触发；仅同步白名单字段；支持范围选择（单条/批量）。
+  - 冲突解决策略（以本地为准/以远端为准/交互式合并）与同步日志。
+- 导出与迁移：
+  - 提供导出 JSON（时间线+本地媒体路径）与导出 MP4；禁止将媒体二进制上传到服务端。
+- 隐私与安全：
+  - 严格限制服务端持久化范围，避免任何媒体或敏感文件路径泄露；所有输入均需 Zod 校验与鉴权保护。

@@ -159,6 +159,12 @@ export interface AppSettings {
   maxTokens: number;
   temperature: number;
   enableTelemetry: boolean;
+  // Memory feature related preferences (desktop-only persistence)
+  birthYear?: number;
+  birthRegion?: string; // e.g., "CN-Guangdong/Guangzhou"
+  memoryLanguage?: 'zh-CN' | 'en-US';
+  imageStyleDefault?: 'realistic' | 'artistic' | 'cartoon' | 'vintage';
+  imageAspectDefault?: '1:1' | '16:9' | '9:16' | '4:3';
 }
 
 // AI 聊天相关类型

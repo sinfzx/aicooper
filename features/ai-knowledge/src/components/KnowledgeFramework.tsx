@@ -14,7 +14,9 @@ import {
   Collapse,
   Divider,
   Box,
-  Title
+  Title,
+  TextInput,
+  Textarea
 } from '@mantine/core'
 import {
   IconBrain,
@@ -26,7 +28,11 @@ import {
   IconEyeOff,
   IconSearch,
   IconChevronDown,
-  IconChevronRight
+  IconChevronRight,
+  IconEdit,
+  IconTrash,
+  IconCheck,
+  IconX
 } from '@tabler/icons-react'
 import { KnowledgeFramework as KnowledgeFrameworkType, KnowledgeNode, SearchProvider } from '@my-platform/types'
 import { builtInFrameworks } from '@/data/builtInFrameworks'
@@ -44,6 +50,11 @@ const getTauriInvoke = async () => {
   return null;
 };
 
+const API_BASE = (
+  ((globalThis as any).process?.env?.NEXT_PUBLIC_API_BASE_URL as string | undefined) ||
+  'http://localhost:3001'
+).replace(/\/$/, '');
+
 interface NodeComponentProps {
   node: KnowledgeNode
   onToggleExpand: (nodeId: string) => void
@@ -51,6 +62,8 @@ interface NodeComponentProps {
   onGenerateChildrenFromUrls: (node: KnowledgeNode) => void
   onSearch: (query: string) => void
   searchProviders: SearchProvider[]
+  onUpdateNode: (nodeId: string, updates: { title?: string; description?: string; questions?: string[] }) => void
+  onDeleteNode: (nodeId: string) => void
 }
 
 const NodeComponent: React.FC<NodeComponentProps> = ({
@@ -59,9 +72,15 @@ const NodeComponent: React.FC<NodeComponentProps> = ({
   onGenerateChildren,
   onSearch,
   onGenerateChildrenFromUrls,
-  searchProviders
+  searchProviders,
+  onUpdateNode,
+  onDeleteNode
 }) => {
   const [showQuestions, setShowQuestions] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [editTitle, setEditTitle] = useState(node.title)
+  const [editDescription, setEditDescription] = useState(node.description || '')
+  const [editQuestions, setEditQuestions] = useState<string>((node.questions || []).join('\n'))
 
   const getNodeIcon = () => {
     if (node.children.length > 0) {
@@ -93,6 +112,12 @@ const NodeComponent: React.FC<NodeComponentProps> = ({
             >
               {showQuestions ? <IconEyeOff size={16} /> : <IconEye size={16} />}
             </ActionIcon>
+            <ActionIcon variant="subtle" size="sm" onClick={() => setEditing(!editing)}>
+              <IconEdit size={16} />
+            </ActionIcon>
+            <ActionIcon variant="subtle" color="red" size="sm" onClick={() => onDeleteNode(node.id)}>
+              <IconTrash size={16} />
+            </ActionIcon>
             <Button
               variant="light"
               size="xs"
@@ -112,10 +137,34 @@ const NodeComponent: React.FC<NodeComponentProps> = ({
           </Group>
         </Group>
 
-        {node.description && (
+        {!editing && node.description && (
           <Text size="sm" c="dimmed" mb="sm">
             {node.description}
           </Text>
+        )}
+
+        {editing && (
+          <Stack gap="xs" mb="sm">
+            <TextInput label="标题" value={editTitle} onChange={(e) => setEditTitle(e.currentTarget.value)} />
+            <Textarea label="描述" value={editDescription} onChange={(e) => setEditDescription(e.currentTarget.value)} minRows={2} />
+            <Textarea label="问题（每行一个）" value={editQuestions} onChange={(e) => setEditQuestions(e.currentTarget.value)} minRows={3} />
+            <Group justify="flex-end" gap="xs">
+              <Button size="xs" variant="light" leftSection={<IconX size={14} />} onClick={() => {
+                setEditing(false)
+                setEditTitle(node.title)
+                setEditDescription(node.description || '')
+                setEditQuestions((node.questions || []).join('\n'))
+              }}>取消</Button>
+              <Button size="xs" leftSection={<IconCheck size={14} />} onClick={() => {
+                onUpdateNode(node.id, {
+                  title: editTitle,
+                  description: editDescription,
+                  questions: editQuestions.split('\n').map(s => s.trim()).filter(Boolean)
+                })
+                setEditing(false)
+              }}>保存</Button>
+            </Group>
+          </Stack>
         )}
 
         <Collapse in={showQuestions && node.questions.length > 0}>
@@ -156,8 +205,11 @@ const NodeComponent: React.FC<NodeComponentProps> = ({
                 node={child}
                 onToggleExpand={onToggleExpand}
                 onGenerateChildren={onGenerateChildren}
+                onGenerateChildrenFromUrls={onGenerateChildrenFromUrls}
                 onSearch={onSearch}
                 searchProviders={searchProviders}
+                onUpdateNode={onUpdateNode}
+                onDeleteNode={onDeleteNode}
               />
             ))}
           </Stack>
@@ -255,6 +307,28 @@ export const KnowledgeFramework: React.FC = () => {
   const handleToggleExpand = useCallback((nodeId: string) => {
     if (!selectedFramework) return
 
+    const findNodeById = (nodes: KnowledgeNode[], id: string): any | null => {
+      for (const n of nodes) {
+        if (n.id === id) return n as any;
+        if (n.children?.length) {
+          const f = findNodeById(n.children, id);
+          if (f) return f;
+        }
+      }
+      return null;
+    };
+
+    const targetBefore = findNodeById(selectedFramework.rootNodes, nodeId);
+    const prevExpanded = !!(targetBefore && (targetBefore as any).expanded);
+
+    // 如果没有 serverId，则尝试根据 title+level+序号匹配到服务端 id（简化版映射）
+    const ensureServerIds = (fw: any) => {
+      if (fw && fw.serverId) return fw;
+      // 这里可以根据远端接口补充完整映射逻辑；当前占位
+      return fw;
+    };
+    const frameworkForSync = ensureServerIds(selectedFramework as any);
+
     const updateNodeExpansion = (nodes: KnowledgeNode[]): KnowledgeNode[] => {
       return nodes.map(node => {
         if (node.id === nodeId) {
@@ -282,6 +356,28 @@ export const KnowledgeFramework: React.FC = () => {
           .catch(error => console.error('Failed to save framework:', error));
       }
     });
+
+    // 可选：同步服务端节点展开状态（需要 serverId 映射）
+    try {
+      const serverFrameworkId = (frameworkForSync as any).serverId;
+      const serverNodeId = (targetBefore as any)?.serverId;
+      const shouldSync = (() => {
+        try {
+          const raw = typeof window !== 'undefined' ? window.localStorage.getItem('settings_cache') : null;
+          if (!raw) return false;
+          const s = JSON.parse(raw);
+          return !!s?.framework_sync_expanded;
+        } catch { return false; }
+      })();
+      if (shouldSync && serverFrameworkId && serverNodeId) {
+        const newExpanded = !prevExpanded;
+        fetch(`${API_BASE}/api/frameworks/${serverFrameworkId}/nodes/${serverNodeId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ expanded: newExpanded })
+        }).catch(() => {});
+      }
+    } catch {}
   }, [selectedFramework])
 
   const handleGenerateChildren = async (parentNode: KnowledgeNode) => {
@@ -393,19 +489,36 @@ export const KnowledgeFramework: React.FC = () => {
     try {
       let template = '';
       try {
+        // @ts-ignore 仅桌面端存在该路径
         const mod: any = await import('@/prompts/framework-prompts');
         template = mod.URL_SUMMARY_PROMPT || '';
       } catch {}
 
+      // 抓取 URL 文本内容
+      const invoke = await getTauriInvoke();
+      let fetchedContents: string[] = [];
+      if (invoke) {
+        try {
+          fetchedContents = await Promise.all(
+            urls.map(async (u) => {
+              try { return await invoke('fetch_url_text', { url: u }) as unknown as string } catch { return '' }
+            })
+          );
+        } catch {}
+      }
+      const combined = fetchedContents
+        .map((c, i) => `# Source ${i+1}: ${urls[i]}\n${(c || '').slice(0, 3000)}`)
+        .join('\n\n');
+
       const filled = template
         .replace('{urls}', urls.map((u) => `- ${u}`).join('\n'))
         .replace('{parentTitle}', parentNode.title)
-        .replace('{parentContent}', parentNode.content || '')
+        .replace('{parentContent}', (parentNode.content || ''))
         .replace('{domain}', selectedFramework.domain)
-        .replace('{level}', String((parentNode as any).level ? (parentNode as any).level + 1 : 1));
+        .replace('{level}', String((parentNode as any).level ? (parentNode as any).level + 1 : 1))
+        .concat(`\n\n---\n请基于以下抓取内容进行更准确的要点提取与子节点生成：\n${combined}`);
 
       let text = '';
-      const invoke = await getTauriInvoke();
       if (invoke) {
         const keys = await invoke<any[]>('get_api_keys');
         const def = keys.find((k) => k.is_default && k.is_active) || keys[0];
@@ -439,6 +552,7 @@ export const KnowledgeFramework: React.FC = () => {
         title: n.title || `子节点-${idx + 1}`,
         content: n.content || '',
         questions: Array.isArray(n.questions) ? n.questions : [],
+        urls: [],
         parentId: parentNode.id,
         children: [],
         level,
@@ -469,6 +583,35 @@ export const KnowledgeFramework: React.FC = () => {
     } finally {
       setIsGenerating(false);
     }
+  };
+
+  const updateNodeLocal = (nodeId: string, updates: { title?: string; description?: string; questions?: string[] }) => {
+    if (!selectedFramework) return;
+    const patch = (nodes: KnowledgeNode[]): KnowledgeNode[] => nodes.map(n => {
+      if (n.id === nodeId) {
+        return {
+          ...n,
+          ...(updates.title !== undefined ? { title: updates.title } : {}),
+          ...(updates.description !== undefined ? { description: updates.description } : {}),
+          ...(updates.questions !== undefined ? { questions: updates.questions } : {}),
+          updatedAt: new Date().toISOString() as any,
+        } as any;
+      }
+      return { ...n, children: n.children && n.children.length ? patch(n.children) : [] } as any;
+    });
+    const updated = { ...selectedFramework, rootNodes: patch(selectedFramework.rootNodes) } as any;
+    setSelectedFramework(updated);
+    getTauriInvoke().then(inv => { if (inv) inv('save_knowledge_framework', { framework: updated }); });
+  };
+
+  const deleteNodeLocal = (nodeId: string) => {
+    if (!selectedFramework) return;
+    const remove = (nodes: KnowledgeNode[]): KnowledgeNode[] => nodes
+      .filter(n => n.id !== nodeId)
+      .map(n => ({ ...n, children: n.children && n.children.length ? remove(n.children) : [] } as any));
+    const updated = { ...selectedFramework, rootNodes: remove(selectedFramework.rootNodes), updatedAt: new Date().toISOString() } as any;
+    setSelectedFramework(updated);
+    getTauriInvoke().then(inv => { if (inv) inv('save_knowledge_framework', { framework: updated }); });
   };
 
   const parseAIResponseToNodes = (response: string, level: number): KnowledgeNode[] => {
@@ -611,6 +754,8 @@ export const KnowledgeFramework: React.FC = () => {
                 onGenerateChildrenFromUrls={handleGenerateChildrenFromUrls}
                 onSearch={handleSearch}
                 searchProviders={searchProviders}
+                onUpdateNode={updateNodeLocal}
+                onDeleteNode={deleteNodeLocal}
               />
             ))}
           </Stack>

@@ -23,7 +23,8 @@ import {
   Alert,
   Box,
   Timeline,
-  Anchor
+  Anchor,
+  Switch
 } from '@mantine/core';
 import {
   IconRoute,
@@ -41,6 +42,7 @@ import {
 import { notifications } from '@mantine/notifications';
 import { FlowDesign, Tag } from '@my-platform/types';
 import { useFlowDesign } from '../hooks/useFlowDesign';
+import { useTags } from '../hooks/useTags';
 // 暂时注释掉PageLayout导入，直接使用Stack布局
 // import { PageLayout } from '../../../apps/desktop/src/components/layout/PageLayout';
 
@@ -54,9 +56,17 @@ export const FlowDesignManager: React.FC<FlowDesignManagerProps> = ({
   const {
     flows,
     loading,
+    error,
     createFlow,
-    deleteFlow
+    deleteFlow,
+    syncFlow,
+    downloadFlow,
   } = useFlowDesign();
+
+  const { tags: allTags } = useTags();
+  const [tagFilter, setTagFilter] = useState<string[]>([]);
+  const [onlyLocal, setOnlyLocal] = useState<boolean>(false);
+  const [onlyBestPractice, setOnlyBestPractice] = useState<boolean>(false);
 
   const [selectedFlow, setSelectedFlow] = useState<FlowDesign | null>(null);
   // 创建改为二级页面路由
@@ -80,6 +90,45 @@ export const FlowDesignManager: React.FC<FlowDesignManagerProps> = ({
     referenceUrls: ''
   });
   const [aiGenerating, setAiGenerating] = useState(false);
+
+  const API_BASE = (
+    ((globalThis as any).process?.env?.NEXT_PUBLIC_API_BASE_URL as string | undefined) ||
+    'http://localhost:3001'
+  ).replace(/\/$/, '');
+
+  const confirmSyncIfConflict = async (flow: any): Promise<boolean> => {
+    try {
+      if (!flow.serverId) return true;
+      const res = await fetch(`${API_BASE}/api/flows/${flow.serverId}`);
+      const data = await res.json();
+      if (!res.ok || !data?.success) return true;
+      const remoteUpdated = new Date(data.data.updatedAt || 0).getTime();
+      const localUpdated = new Date(flow.updatedAt || flow.updated_at || 0).getTime();
+      if (remoteUpdated > localUpdated) {
+        return window.confirm('服务器版本较新，继续上传将覆盖服务器最新内容。是否继续上传？');
+      }
+      return true;
+    } catch {
+      return true;
+    }
+  };
+
+  const confirmDownloadIfConflict = async (flow: any): Promise<boolean> => {
+    try {
+      if (!flow.serverId) return true;
+      const res = await fetch(`${API_BASE}/api/flows/${flow.serverId}`);
+      const data = await res.json();
+      if (!res.ok || !data?.success) return true;
+      const remoteUpdated = new Date(data.data.updatedAt || 0).getTime();
+      const localUpdated = new Date(flow.updatedAt || flow.updated_at || 0).getTime();
+      if (localUpdated > remoteUpdated) {
+        return window.confirm('本地版本较新，继续下载将覆盖本地内容。是否继续下载？');
+      }
+      return true;
+    } catch {
+      return true;
+    }
+  };
 
   const handleCreateFlow = async () => {
     try {
@@ -175,6 +224,9 @@ export const FlowDesignManager: React.FC<FlowDesignManagerProps> = ({
 
   return (
     <Stack gap="lg" p="md">
+      {error && (
+        <Alert color="red" variant="light">{error}</Alert>
+      )}
       {/* 头部操作栏 */}
       <Group justify="space-between">
         <Group>
@@ -201,6 +253,21 @@ export const FlowDesignManager: React.FC<FlowDesignManagerProps> = ({
             手动创建
           </Button>
         </Group>
+      </Group>
+
+      {/* 过滤条件 */}
+      <Group>
+        <MultiSelect
+          placeholder="按标签筛选"
+          data={(allTags || []).map((t: any) => ({ value: t.id, label: t.parent ? `${t.parent.name} / ${t.name}` : t.name }))}
+          value={tagFilter}
+          onChange={setTagFilter}
+          searchable
+          clearable
+          style={{ minWidth: 260 }}
+        />
+        <Switch label="仅显示本地" checked={onlyLocal} onChange={(e) => setOnlyLocal(e.currentTarget.checked)} />
+        <Switch label="仅最佳实践" checked={onlyBestPractice} onChange={(e) => setOnlyBestPractice(e.currentTarget.checked)} />
       </Group>
 
       {/* 流程列表 */}
@@ -235,7 +302,22 @@ export const FlowDesignManager: React.FC<FlowDesignManagerProps> = ({
         </Card>
       ) : (
         <Grid>
-          {flows.map((flow) => (
+          {flows
+            .filter((flow) => {
+              if (tagFilter.length === 0) return true;
+              const tags = (flow as any).tags || [];
+              if (!Array.isArray(tags) || tags.length === 0) return false;
+              const matchesTag = tagFilter.some(
+                (id) =>
+                  tags.includes(id) ||
+                  tags.includes((allTags || []).find((t: any) => t.id === id)?.name)
+              );
+              const matchesLocal = !onlyLocal || !!(flow as any).localOnly;
+              const bestPractice = Array.isArray(tags) && (tags.includes('best-practice') || tags.includes('最佳实践'));
+              const matchesBest = !onlyBestPractice || bestPractice;
+              return matchesTag && matchesLocal && matchesBest;
+            })
+            .map((flow) => (
             <Grid.Col key={flow.id} span={{ base: 12, md: 6, lg: 4 }}>
               <Card shadow="sm" padding="lg" radius="md" withBorder h="100%">
                 <Stack gap="sm" h="100%">
@@ -247,6 +329,9 @@ export const FlowDesignManager: React.FC<FlowDesignManagerProps> = ({
                     >
                       {flow.localOnly ? '本地' : '已同步'}
                     </Badge>
+                    {(flow as any).isBlocked && (
+                      <Badge variant="light" color="red" size="sm">已屏蔽</Badge>
+                    )}
                     <Badge
                       variant="light"
                       color={getDifficultyColor(flow.difficulty)}
@@ -304,7 +389,23 @@ export const FlowDesignManager: React.FC<FlowDesignManagerProps> = ({
                         variant="light"
                         size="sm"
                         onClick={() => {
-                          // TODO: 编辑功能
+                          try {
+                            if (typeof window !== 'undefined') {
+                              const draft = {
+                                id: (flow as any).id,
+                                title: flow.title,
+                                description: flow.description,
+                                difficulty: flow.difficulty,
+                                article: (flow as any).article || '',
+                                totalTime: (flow as any).totalTime || '',
+                                steps: (flow as any).steps || [],
+                                tools: (flow as any).tools || [],
+                                tags: (flow as any).tags || [],
+                              } as any;
+                              window.localStorage.setItem('flowDraft', JSON.stringify(draft));
+                              window.location.href = '/flows/new?edit=1';
+                            }
+                          } catch {}
                         }}
                       >
                         <IconEdit size={14} />
@@ -314,12 +415,27 @@ export const FlowDesignManager: React.FC<FlowDesignManagerProps> = ({
                           variant="light"
                           color="blue"
                           size="sm"
-                          onClick={() => {
-                            // TODO: 实现同步到服务器的逻辑
-                            console.log('Sync to server:', flow.id);
+                          onClick={async () => {
+                            if (await confirmSyncIfConflict(flow)) {
+                              await syncFlow(flow.id);
+                            }
                           }}
                         >
                           <IconUpload size={14} />
+                        </ActionIcon>
+                      )}
+                      {!flow.localOnly && (
+                        <ActionIcon
+                          variant="light"
+                          color="teal"
+                          size="sm"
+                          onClick={async () => {
+                            if (await confirmDownloadIfConflict(flow)) {
+                              await downloadFlow((flow as any).serverId || flow.id);
+                            }
+                          }}
+                        >
+                          <IconExternalLink size={14} />
                         </ActionIcon>
                       )}
                     </Group>
